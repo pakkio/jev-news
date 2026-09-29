@@ -1,9 +1,10 @@
+import os
 import sys
 import json
 import urllib.request
 import urllib.error
 
-SERPER_API_KEY = "REDACTED_SERPER_API_KEY"
+SERPER_API_KEY = os.environ.get("SERPER_API_KEY")
 
 
 def serper_search(query: str, num: int = 10) -> list[dict]:
@@ -66,6 +67,10 @@ def clean_content(text: str) -> str:
 
 
 def main():
+    if not SERPER_API_KEY:
+        print("Error: SERPER_API_KEY environment variable is not set.")
+        sys.exit(1)
+
     if len(sys.argv) < 2:
         print('Usage: python3 main.py "search query"')
         sys.exit(1)

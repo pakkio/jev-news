@@ -1,7 +1,8 @@
 import os
+import sys
 import requests
 
-API_KEY = os.environ.get("TAVILY_API_KEY", "REDACTED_TAVILY_API_KEY")
+API_KEY = os.environ.get("TAVILY_API_KEY")
 
 def tavily_search(query, max_results=3):
     resp = requests.post(
@@ -17,6 +18,10 @@ def tavily_search(query, max_results=3):
     return resp.json()
 
 if __name__ == "__main__":
+    if not API_KEY:
+        print("Error: TAVILY_API_KEY environment variable is not set.")
+        sys.exit(1)
+
     results = tavily_search("What is Tavily?")
     for r in results["results"]:
         print(f"Title: {r['title']}")
