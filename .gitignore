@@ -1,5 +1,11 @@
 __pycache__/
 *.pyc
 .env
+\\
 venv/
 .venv/
+
+# generated news digests (rebuild with format_news.py)
+ai-news.json
+ai-news.html
+ai-news.md
