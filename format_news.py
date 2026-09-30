@@ -164,6 +164,50 @@ AGGI = {"minute": ("minuto", "minuti"), "hour": ("ora", "ore"),
         "month": ("mese", "mesi")}
 
 
+# ----------------------------------------------------------------- hero -----
+# Verified to return 200 on images.unsplash.com. Attribution for these reads
+# "Unsplash Contributor" rather than a named photographer, so the page credits
+# Unsplash and links out instead of guessing a name.
+HEROES = {
+    "earth":   ("photo-1451187580459-43490279c0fa", "la Terra di notte"),
+    "circuit": ("photo-1550751827-4bd374c3f58b", "un circuito in vetro"),
+    "code":    ("photo-1526374965328-7f61d4dc18c5", "codice su schermo"),
+    "robot":   ("photo-1620712943543-bcc4688e7485", "un robot umanoide"),
+    "laptop":  ("photo-1531297484001-80022131f5a1", "un portatile al buio"),
+}
+DEFAULT_HERO = "earth"
+FAVICON = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
+           "viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' "
+           "y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237aa2f7'/%3E"
+           "%3Cstop offset='1' stop-color='%23f4a261'/%3E%3C/linearGradient%3E"
+           "%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='%2308090d'/%3E"
+           "%3Ccircle cx='16' cy='16' r='7' fill='url(%23g)'/%3E%3C/svg%3E")
+
+
+def hero_html(hero: str, lang: str) -> str:
+    """Banner image, or nothing. The gradient underneath it means a blocked or
+    dead image degrades to the plain header rather than a broken icon."""
+    if not hero or hero.lower() == "off":
+        return ""
+    label = {"it": "Foto", "en": "Photo"}[lang]
+    esc = html.escape
+    if hero.lower() in HEROES:
+        pid, alt = HEROES[hero.lower()]
+        src = (f"https://images.unsplash.com/{pid}"
+               f"?w=2000&q=70&fm=jpg&fit=crop&auto=format")
+        href = ("https://unsplash.com/?utm_source=ai_briefing"
+                "&utm_medium=referral")
+    else:
+        src, href, alt = hero, hero, "hero"
+    return f"""
+    <figure class="hero">
+      <img src="{esc(src)}" alt="{esc(alt)}" loading="eager"
+           decoding="async" referrerpolicy="no-referrer">
+      <figcaption class="credit">{esc(label)}: <a href="{esc(href)}"
+        target="_blank" rel="noopener nofollow">Unsplash</a></figcaption>
+    </figure>"""
+
+
 def show(c: dict, field: str = "title") -> str:
     """Translated text when available, English otherwise."""
     return c.get(f"{field}_it") or c[field]
@@ -357,7 +401,8 @@ def classify(title: str, snippet: str) -> tuple:
 
 
 # ------------------------------------------------------------------ html ----
-def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6) -> str:
+def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
+                hero=DEFAULT_HERO) -> str:
     t = UI[lang]
     esc = html.escape
     L = (lambda i: i) if lang == "it" else (lambda i: i)
@@ -414,6 +459,7 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6) -> s
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="{FAVICON}">
 <title>{esc(t['title'])}</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400&display=swap');
@@ -434,7 +480,30 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6) -> s
   .wrap {{ max-width:1120px; margin:0 auto; padding:0 28px; }}
   a {{ color:inherit; }}
 
-  header.top {{ padding:78px 0 30px; border-bottom:1px solid rgba(255,255,255,.08); }}
+  header.top {{ padding:0 0 30px; border-bottom:1px solid rgba(255,255,255,.08); }}
+  header.top.no-hero {{ padding-top:78px; }}
+  .hero {{
+    position:relative; height:236px; margin:0 -28px; overflow:hidden;
+    background:linear-gradient(170deg,#111726 0%,#0c0e15 55%,#08090d 100%);
+  }}
+  .hero img {{
+    width:100%; height:100%; object-fit:cover; display:block; opacity:.6;
+    -webkit-mask-image:linear-gradient(180deg,#000 42%,transparent 99%);
+            mask-image:linear-gradient(180deg,#000 42%,transparent 99%);
+  }}
+  .hero::after {{
+    content:""; position:absolute; inset:0; pointer-events:none;
+    background:linear-gradient(180deg,rgba(8,9,13,.46) 0%,rgba(8,9,13,.10) 38%,rgba(8,9,13,.88) 88%);
+  }}
+  .hero .credit {{
+    position:absolute; right:28px; bottom:13px; z-index:2; margin:0;
+    font:500 10px/1 Inter; letter-spacing:.16em; text-transform:uppercase;
+    color:rgba(255,255,255,.42);
+  }}
+  .hero .credit a {{ color:inherit; text-decoration:none; border-bottom:1px solid rgba(255,255,255,.2); }}
+  .hero .credit a:hover {{ color:#fff; }}
+  .kicker {{ margin-top:0; }}
+  .kicker.lead {{ margin-top:38px; }}
   .kicker {{ font:600 11px/1 Inter; letter-spacing:.28em; text-transform:uppercase; color:#7aa2f7; }}
   h1 {{
     font:700 clamp(40px,7.5vw,78px)/1.02 "Space Grotesk"; margin:16px 0 0;
@@ -563,8 +632,9 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6) -> s
 </head>
 <body>
   <div class="wrap">
-    <header class="top">
-      <div class="kicker">{esc(t['kicker'])} {generated}</div>
+    <header class="top{'' if hero and hero.lower() != 'off' else ' no-hero'}">
+      {hero_html(hero, lang)}
+      <div class="kicker{' lead' if hero and hero.lower() != 'off' else ''}">{esc(t['kicker'])} {generated}</div>
       <h1>{esc(t['title'])}</h1>
       <p class="sub">{esc(t['sub'].format(n=meta['n']))}</p>
       {intro_html}
@@ -700,7 +770,7 @@ def main() -> None:
     path, lang, intro = None, "it", None
     n_main, n_more = 4, 6
     min_sim, show_folded = 0.62, False
-    do_translate, model = False, "openai/gpt-4o-mini"
+    do_translate, model, hero = False, "openai/gpt-4o-mini", DEFAULT_HERO
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -723,6 +793,8 @@ def main() -> None:
             do_translate = not do_translate; i += 1
         elif a == "--model":
             model = argv[i + 1]; i += 2
+        elif a == "--hero":
+            hero = argv[i + 1]; i += 2
         elif a.startswith("--"):
             i += 2
         else:
@@ -790,8 +862,13 @@ def main() -> None:
     suffix = "" if lang == "it" else f".{lang}"
     hp = os.path.join(HERE, f"ai-news{suffix}.html")
     mp = os.path.join(HERE, f"ai-news{suffix}.md")
+    if hero.lower() != "off" and hero.lower() not in HEROES \
+            and not hero.startswith(("http://", "https://")):
+        print(f"Error: --hero must be one of {sorted(HEROES)}, 'off', or a URL")
+        sys.exit(1)
+
     open(hp, "w").write(
-        render_html(clusters, meta, lang, intro, generated, n_main, n_more))
+        render_html(clusters, meta, lang, intro, generated, n_main, n_more, hero))
     open(mp, "w").write(
         render_md(clusters, meta, lang, intro, generated, n_main, n_more))
     print(f"  scritto {hp}\n  scritto {mp}\n")

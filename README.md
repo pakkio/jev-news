@@ -58,6 +58,7 @@ python3 format_news.py --lang it --intro "..." [--main 4] [--more 6] [--folded]
 | `--folded` | list every merge, with its folded titles - check the clustering |
 | `--translate` | translate titles and snippets into Italian (see below) |
 | `--model M` | model used for translation (default `openai/gpt-4o-mini`) |
+| `--hero N` | banner image: `earth` (default), `circuit`, `code`, `robot`, `laptop`, `off`, or any URL |
 
 Grouped into five thematic areas (Politica e sicurezza, Modelli e ricerca,
 Chip e infrastrutture, Business, Settore), each with its own accent colour and
@@ -87,6 +88,24 @@ education, so below three tokens and two shared words the score falls back to
 Jaccard, which a short title cannot game.
 
 Run `--folded` to see every merge and its sources before trusting it.
+
+### The hero image
+
+A 236px banner from Unsplash, hotlinked free, masked so it dissolves into the
+page background instead of ending on a hard edge, with the credit bottom
+right. Five images are catalogued and each was verified to return HTTP 200:
+
+```bash
+python3 format_news.py --hero earth      # la Terra di notte (default)
+python3 format_news.py --hero circuit    # un circuito in vetro
+python3 format_news.py --hero off        # nessuna immagine
+python3 format_news.py --hero https://example.com/photo.jpg
+```
+
+The figure carries its own gradient background, so a blocked or dead image
+degrades to the plain header rather than a broken-icon box. Attribution for
+these reads "Unsplash Contributor" rather than a named photographer, so the
+page credits Unsplash and links out instead of guessing a name.
 
 ### Italian titles and snippets
 
