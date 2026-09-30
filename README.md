@@ -45,7 +45,7 @@ Reads a stories JSON file and writes three views: a styled HTML page, a
 markdown digest, and a colourised terminal digest.
 
 ```bash
-python3 format_news.py --lang it --intro "..." [--main 4] [--more 6]
+python3 format_news.py --lang it --intro "..." [--main 4] [--more 6] [--folded]
 ```
 
 | Flag | Effect |
@@ -54,11 +54,37 @@ python3 format_news.py --lang it --intro "..." [--main 4] [--more 6]
 | `--intro` | lead paragraph under the title |
 | `--main N` | lead cards shown per area (default 4) |
 | `--more N` | secondary cards shown per area (default 6) |
+| `--sim F` | same-event merge threshold (default 0.62) |
+| `--folded` | list every merge, with its folded titles - check the clustering |
 
 Grouped into five thematic areas (Politica e sicurezza, Modelli e ricerca,
 Chip e infrastrutture, Business, Settore), each with its own accent colour and
-a note explaining what belongs there. Near-duplicate coverage of one event is
-clustered into a single card with several sources.
+a note explaining what belongs there.
+
+### How stories get unified
+
+Two headlines about the same event become one card with several sources. Two
+rules decide it:
+
+- **token containment** for the same story told twice;
+- **shared rare entities** for the case containment misses. The NYT writes
+  *"DeepSeek and Huawei Target a Key Source of Nvidia's A.I. Dominance"*, the
+  wire writes *"DeepSeek partners with Huawei to develop chip programming
+  tools"* - two words overlap and nothing else, but both name the same
+  companies.
+
+An entity is a term that is ALLCAPS (`HBM`) or PascalCase (`DeepSeek`) in the
+headline, or capitalised inside one and never written in lowercase inside one.
+That last part is what stops `'faces'` and `'lawsuit'` - ordinary words that
+are merely rare in a few hundred headlines - from merging two unrelated
+lawsuits.
+
+A headline reduced to one meaningful word (`AI and education do not mix` keeps
+only *education*) would otherwise score 1.00 against anything else mentioning
+education, so below three tokens and two shared words the score falls back to
+Jaccard, which a short title cannot game.
+
+Run `--folded` to see every merge and its sources before trusting it.
 
 Display is capped per area (`--main` + `--more`) so every section comes out
 the same size whatever the raw counts; the badge and the `+N` note still

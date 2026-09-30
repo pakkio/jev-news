@@ -200,22 +200,81 @@ def split_areas(clusters: list, n_main: int, n_more: int) -> list:
 
 
 # ------------------------------------------------------------ clustering ----
+GENERIC_TITLE = set("""exclusive breaking update updates opinion analysis explainer
+watch live video videos photos podcast newsletter review reviews sponsored
+recap highlights fullscreen""".split())
+
+
+def entity_terms(items: list) -> set:
+    """Tokens that behave like proper nouns in this corpus.
+
+    Two ways to qualify:
+
+    * an unambiguous brand shape anywhere in the headline - ALLCAPS like HBM,
+      or PascalCase like DeepSeek, which cannot be an ordinary word whatever
+      its position, so it counts even at position 0;
+    * a plain capitalised word inside a headline, never seen in lowercase in
+      one. That covers Nvidia, Huawei, Anthropic.
+
+    Tokens written in lowercase inside a headline are excluded outright, which
+    is the line that keeps 'faces' and 'lawsuit' - ordinary words that happen
+    to be rare in a 146-title corpus - from merging two unrelated lawsuits.
+    """
+    strong, mild, soft = set(), set(), set()
+    for it in items:
+        for i, w in enumerate(re.findall(r"[A-Za-z0-9][A-Za-z0-9'’.\\-]*", it["title"])):
+            core = w.strip(".,'’-").lower()
+            if len(core) <= 3 or core in GENERIC_TITLE:
+                continue
+            if w.isupper() or any(c.isupper() for c in w[1:]):
+                strong.add(core)                 # HBM, DeepSeek, McKinsey
+            elif w[0].isupper():
+                if i > 0:
+                    mild.add(core)                # Nvidia, Huawei
+            else:
+                soft.add(core)                    # written lowercase in a title
+    return (strong | mild) - soft
+
+
 def cluster(items: list, min_sim: float) -> list:
-    """Greedy containment clustering: one card per real-world event."""
+    """Greedy clustering: one card per real-world event.
+
+    Two rules, and the second one is what makes the difference:
+
+    * plain token containment, for the same story told twice;
+    * shared *hard* anchors - terms so rare in this corpus that they name an
+      entity rather than a topic. "DeepSeek" and "Huawei" appear in a handful
+      of titles each, so two headlines carrying both are the same event even
+      when almost no other word matches. A topic word like "lawsuit" appears
+      in too many titles to count, so it never merges anything on its own.
+
+    Every candidate is compared against each member individually rather than
+    against the union of a cluster's tokens: union comparison snowballs, and
+    a cluster that started broad ends up absorbing unrelated stories.
+    """
+    df: dict = {}
+    for it in items:
+        for t in tokens(it["title"]):
+            df[t] = df.get(t, 0) + 1
+    hard_thr = max(2, int(0.03 * len(items)))
+    ents = entity_terms(items)
+
+    def prep(it):
+        tk = tokens(it["title"])
+        return tk, {t for t in tk if df.get(t, 0) <= hard_thr and t in ents}
+
     clusters = []
     for it in items:
-        tk = tokens(it["title"])
+        tk, anchor = prep(it)
+        it["_tk"], it["_anchor"] = tk, anchor
         best, best_score = None, 0.0
         for c in clusters:
-            inter = len(tk & c["tokens"])
-            if not inter:
-                continue
-            score = inter / min(len(tk), len(c["tokens"]))
-            if score > best_score:
-                best, best_score = c, score
+            for m in c["members"]:
+                s = affinity(tk, m["_tk"], anchor, m["_anchor"])
+                if s > best_score:
+                    best, best_score = c, s
         if best is not None and best_score >= min_sim:
             best["members"].append(it)
-            best["tokens"] |= tk
             # keep the most informative title/snippet, but the freshest date
             if len(it["title"]) > len(best["title"]) * 1.15:
                 best["title"] = it["title"]
@@ -226,7 +285,8 @@ def cluster(items: list, min_sim: float) -> list:
         else:
             clusters.append({"title": it["title"], "link": it["link"],
                              "snippet": it["snippet"], "date": it["date"],
-                             "tokens": set(tk), "members": [it]})
+                             "tokens": set(tk), "anchor": set(anchor),
+                             "members": [it]})
     for c in clusters:
         seen, sources = set(), []
         for m in sorted(c["members"], key=lambda m: hours(m["date"])):
@@ -238,8 +298,32 @@ def cluster(items: list, min_sim: float) -> list:
         c["sources"] = sources
         c["area"] = c["members"][0]["area"]
         c["color"] = c["members"][0]["color"]
+        c["folded"] = [m["title"] for m in c["members"][1:]]
     clusters.sort(key=lambda c: hours(c["date"]))
     return clusters
+
+
+def affinity(a: set, b: set, a_anchor: set, b_anchor: set) -> float:
+    """Same-event score for two headlines.
+
+    Containment normally, but a headline reduced to one or two meaningful words
+    ("AI and education do not mix" carries only 'education') would score 1.00
+    against anything else mentioning education. Below the size floor, Jaccard
+    is used instead, which cannot be gamed by a short title.
+    """
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    if not inter:
+        return 0.0
+    if min(len(a), len(b)) >= 3 and inter >= 2:
+        contain = inter / min(len(a), len(b))
+    else:
+        contain = inter / len(a | b)
+    shared = a_anchor & b_anchor
+    if len(shared) >= 2 and contain >= 0.3:
+        return max(contain, 0.85)      # two rare entities is conclusive
+    return contain
 
 
 def hours(d: str) -> float:
@@ -610,6 +694,7 @@ def main() -> None:
     argv = sys.argv[1:]
     path, lang, intro = None, "it", None
     n_main, n_more = 4, 6
+    min_sim, show_folded = 0.62, False
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -621,6 +706,13 @@ def main() -> None:
             n_main = int(argv[i + 1]); i += 2
         elif a == "--more":
             n_more = int(argv[i + 1]); i += 2
+        elif a == "--sim":
+            min_sim = float(argv[i + 1]); i += 2
+        elif a == "--anchors":
+            print("Error: --anchors is now fixed at 2; use --sim to tune")
+            sys.exit(1)
+        elif a == "--folded":
+            show_folded = not show_folded; i += 1
         elif a.startswith("--"):
             i += 2
         else:
@@ -638,7 +730,6 @@ def main() -> None:
         it["area"], it["color"] = classify(it["title"], it.get("snippet", ""))
     raw.sort(key=lambda x: hours(x["date"]))
 
-    min_sim = 0.62
     clusters = cluster(raw, min_sim)
 
     per_area = {a["key"]: sum(1 for c in clusters if c["area"] == a["key"])
@@ -657,10 +748,20 @@ def main() -> None:
         generated = datetime.now().strftime("%d %B %Y")
 
     print(render_term(clusters, lang, generated, intro, n_main, n_more))
+    folded = [c for c in clusters if len(c["sources"]) > 1]
     print(f"  {len(raw)} storie -> {len(clusters)} eventi unici "
-          f"(similarita' >= {min_sim})")
+          f"(unificati: {len(folded)})")
     print(f"  per area: {spread} | mostra {n_main} principali + {n_more} "
           f"secondarie per area\n")
+    if show_folded:
+        print("  fusioni:\n")
+        for c in sorted(folded, key=lambda x: -len(x["sources"])):
+            names = ", ".join(s["name"] for s in c["sources"])
+            print(f"   * [{len(c['sources'])}] {c['title'][:82]}")
+            print(f"       fonti: {names}")
+            for f in c["folded"]:
+                print(f"       piegato: {f[:80]}")
+        print()
 
     suffix = "" if lang == "it" else f".{lang}"
     hp = os.path.join(HERE, f"ai-news{suffix}.html")
