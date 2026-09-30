@@ -24,21 +24,46 @@ python3 main.py "your search query"
 python3 main.py --news --days 7 "artificial intelligence"
 ```
 
-### `format_news.py` — news digest renderer
+### `collect_news.py` — balanced collection
 
-Reads a stories JSON file and writes three views: a styled HTML page, a
-markdown digest, and a colourised terminal digest. Works with the JSON that
-a `--news` sweep produces.
+A single generic sweep skews hard towards model launches: one area can swallow
+a third of the page while another gets two cards. This walks a per-area query
+list instead, stopping early for areas that already have enough coverage and
+spending extra queries only on the ones that are still short.
 
 ```bash
-python3 main.py --news --days 7 "AI" > ai-news.json   # collect
-python3 format_news.py --top 6 ai-news.json            # render
+python3 collect_news.py --target 20        # 20 stories per area
+python3 collect_news.py --target 25 --max-credits 60
 ```
 
-Output: `ai-news.html`, `ai-news.md`, plus the digest on stdout. Stories are
-sorted newest-first and tagged into five beats (Policy & Safety, Models &
-Research, Business & Deals, Chips & Compute, Industry), each with its own
-accent colour.
+Writes `ai-news.json`, and prints a per-area count with `OK`/`LOW` so an
+unbalanced run is visible immediately.
+
+### `format_news.py` — digest renderer
+
+Reads a stories JSON file and writes three views: a styled HTML page, a
+markdown digest, and a colourised terminal digest.
+
+```bash
+python3 format_news.py --lang it --intro "..." [--main 4] [--more 6]
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--lang it\|en` | output language, including relative dates (`2 ore fa`) |
+| `--intro` | lead paragraph under the title |
+| `--main N` | lead cards shown per area (default 4) |
+| `--more N` | secondary cards shown per area (default 6) |
+
+Grouped into five thematic areas (Politica e sicurezza, Modelli e ricerca,
+Chip e infrastrutture, Business, Settore), each with its own accent colour and
+a note explaining what belongs there. Near-duplicate coverage of one event is
+clustered into a single card with several sources.
+
+Display is capped per area (`--main` + `--more`) so every section comes out
+the same size whatever the raw counts; the badge and the `+N` note still
+report the true totals. Lead cards are ranked by a freshness / breadth /
+headline-weight heuristic.
 
 ### `demo.py` — Tavily search demo
 

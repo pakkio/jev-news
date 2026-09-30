@@ -86,13 +86,15 @@ UI = {
             "Raggruppate per area, deduplicate: quando più testate coprono lo stesso "
             "evento diventano una sola scheda con più fonti.",
         focus="In evidenza", others="Altre storie", all="Tutte le storie",
+        main_label="Notizie principali", sub_label="Secondarie",
+        more_note="altre in quest'area",
         sources="fonti", sources_one="fonte", read="leggi",
         window="Finestra", areas="aree", clusters="eventi unici",
         beat="area più coperta", generated="Generato il", source="fonte",
         more="e altre", footer_note="Chiavi mai incluse in questo file.",
         legend="la composizione della settimana", no_intro="",
         stats=(("storie", "{n}"), ("eventi unici", "{c}"), ("aree", "{a}"),
-               ("area più coperta", "{b}"), ("finestra", "{w}")),
+               ("equilibrio per area", "{g}"), ("finestra", "{w}")),
     ),
     "en": dict(
         kicker="Signal · week of", title="AI Briefing",
@@ -100,13 +102,15 @@ UI = {
             "Grouped by area and deduplicated: when several outlets cover the same "
             "event it becomes one card with multiple sources.",
         focus="In focus", others="More stories", all="All stories",
+        main_label="Lead stories", sub_label="Briefs",
+        more_note="more in this area",
         sources="sources", sources_one="source", read="read",
         window="Window", areas="areas", clusters="unique events",
         beat="most-covered beat", generated="Generated", source="source",
         more="more", footer_note="No key material in this file.",
         legend="how the week broke down", no_intro="",
         stats=(("stories", "{n}"), ("unique events", "{c}"), ("areas", "{a}"),
-               ("most-covered beat", "{b}"), ("window", "{w}")),
+               ("spread per area", "{g}"), ("window", "{w}")),
     ),
 }
 
@@ -123,6 +127,76 @@ def tokens(title: str) -> set:
     t = "".join(c for c in t if not unicodedata.combining(c))
     t = re.sub(r"[^a-z0-9 ]", " ", t)
     return {w for w in t.split() if len(w) > 3 and w not in STOP}
+
+
+# ------------------------------------------------------------- ranking -----
+# Words that mark a story as the day's actual news rather than filler.
+BOOST = [
+    (r"\b(exclusive|leak|leaked|first time|for the first time|record)\b", 8),
+    (r"\b(beats|surge|soar|soars|plunge|plunges|jump|jumps|rally|rallies|"
+     r"topple|topples|shock|shocks|upend|upends|warns|warned|slump|"
+     r"tumble|skyrocket|double|triple|halve)\b", 5),
+    (r"\b(landmark|watershed|milestone|ban|bans|banned|sue|sues|suing|"
+     r"ruling|ordered|charge|charges|antitrust|lawsuit|acquire|acquisition|"
+     r"merger|resign|steps down|shuts?|blocks?|rejects?|approves?)\b", 4),
+    (r"\b(launch|launches|unveil|unveils|release|releases|debut|announce|"
+     r"announces|introduces|reveals|rolls out|open.?sources?|open.?weights?)\b", 3),
+]
+
+
+def score(c: dict) -> float:
+    """Heuristic importance: freshness, breadth of coverage, headline weight."""
+    s = max(0.0, 30 - hours(c["date"]) / 4)          # decays over ~5 days
+    s += min(len(c["sources"]), 5) * 5                # several outlets = bigger
+    s += min(len(c["snippet"]) / 45, 6)               # informative snippet
+    for pat, w in BOOST:
+        if re.search(pat, f"{c['title']} {c['snippet']}", re.I):
+            s += w
+    return s
+
+
+MESI_IT = ("gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+           "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre")
+MESI_EN = ("January February March April May June July August September "
+           "October November December").split()
+AGGI = {"minute": ("minuto", "minuti"), "hour": ("ora", "ore"),
+        "day": ("giorno", "giorni"), "week": ("settimana", "settimane"),
+        "month": ("mese", "mesi")}
+
+
+def fmt_date(d: str, lang: str) -> str:
+    """Serper emits English relative dates; an Italian page should not."""
+    d = (d or "").strip()
+    if lang == "en":
+        return d
+    m = re.match(r"(\d+)\s*(minute|hour|day|week|month)s?\s*ago", d, re.I)
+    if m:
+        n, u = int(m.group(1)), m.group(2).lower()
+        sing, plur = AGGI[u]
+        return f"{n} {sing if n == 1 else plur} fa"
+    for i, name in enumerate(MESI_EN, 1):
+        d = re.sub(rf"\b{name[:3]}[a-z]*\b", MESI_IT[i - 1], d, flags=re.I)
+    return d
+
+
+def by_rank(rows: list) -> list:
+    return sorted(rows, key=score, reverse=True)
+
+
+def split_areas(clusters: list, n_main: int, n_more: int) -> list:
+    """Per area: (area, lead, main, secondary, hidden) with a display cap.
+
+    The cap keeps every section the same visual size even when one area has
+    twice the coverage of another; the badge still reports the true total.
+    """
+    out = []
+    for a in AREAS:
+        rows = by_rank([c for c in clusters if c["area"] == a["key"]])
+        if not rows:
+            continue
+        out.append((a, rows[0], rows[:n_main], rows[n_main:n_main + n_more],
+                    max(0, len(rows) - n_main - n_more)))
+    return out
 
 
 # ------------------------------------------------------------ clustering ----
@@ -194,7 +268,7 @@ def classify(title: str, snippet: str) -> tuple:
 
 
 # ------------------------------------------------------------------ html ----
-def render_html(clusters, meta, lang, intro, generated) -> str:
+def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6) -> str:
     t = UI[lang]
     esc = html.escape
     L = (lambda i: i) if lang == "it" else (lambda i: i)
@@ -216,19 +290,18 @@ def render_html(clusters, meta, lang, intro, generated) -> str:
     )
 
     sections, spotlight = [], []
-    for a in AREAS:
-        rows = [c for c in clusters if c["area"] == a["key"]]
-        if not rows:
-            continue
-        lead, rest = rows[0], rows[1:]
+    for a, lead, main_rows, brief_rows, hidden in split_areas(clusters, n_main, n_more):
         spotlight.append(f"""
-        <a class="spot" href="{esc(lead['link'])}" target="_blank" rel="noopener" style="--c:{a['color']}">
+        <a class="spot" href="{esc(lead['sources'][0]['link'])}" target="_blank" rel="noopener" style="--c:{a['color']}">
           <span class="spot-n">{counts[a['key']]:02d}</span>
           <h4>{esc(lead['title'])}</h4>
-          <span class="spot-s">{esc(lead['sources'][0]['name'])} · {esc(lead['date'])}</span>
+          <span class="spot-s">{esc(lead['sources'][0]['name'])} · {esc(fmt_date(lead['date'], lang))}</span>
         </a>""")
-        cards = [card_html(lead, lang, featured=True, t=t)]
-        cards += [card_html(c, lang, t=t) for c in rest]
+        cards = [card_html(r, lang, featured=(i == 0), t=t)
+                 for i, r in enumerate(main_rows)]
+        briefs = "".join(brief_html(r, lang, t=t) for r in brief_rows)
+        more = (f'<p class="more-note">+ {hidden} {esc(t["more_note"])}</p>'
+                if hidden else "")
         sections.append(f"""
       <section id="area-{a['key']}" class="area" style="--c:{a['color']}">
         <header class="area-h">
@@ -236,7 +309,11 @@ def render_html(clusters, meta, lang, intro, generated) -> str:
           <span class="count">{counts[a['key']]}</span>
         </header>
         <p class="area-note">{esc(a[lang][1])}</p>
+        <h3 class="sub-label">{esc(t['main_label'])}</h3>
         <div class="grid">{"".join(cards)}</div>
+        <h3 class="sub-label">{esc(t['sub_label'])}</h3>
+        <div class="briefer">{briefs}</div>
+        {more}
       </section>""")
 
     intro_html = (
@@ -367,6 +444,26 @@ def render_html(clusters, meta, lang, intro, generated) -> str:
   .more-srcs a:hover {{ filter:brightness(1.3); }}
   .rank {{ position:absolute; top:15px; right:19px; font:700 25px/1 "Space Grotesk"; color:rgba(255,255,255,.07); }}
   .rank.feat {{ top:20px; right:24px; font-size:34px; }}
+
+  h3.sub-label {{
+    font:600 10.5px/1 Inter; letter-spacing:.22em; text-transform:uppercase;
+    color:var(--faint); margin:30px 0 14px; display:flex; align-items:center; gap:12px;
+  }}
+  h3.sub-label::after {{ content:""; flex:1; height:1px; background:linear-gradient(90deg, rgba(255,255,255,.1), transparent); }}
+  .briefer {{ display:grid; gap:0 26px; grid-template-columns:repeat(auto-fill,minmax(430px,1fr)); }}
+  .brief {{
+    display:flex; align-items:baseline; gap:11px; padding:11px 4px; text-decoration:none;
+    border-bottom:1px solid rgba(255,255,255,.055);
+  }}
+  .briefer .brief:hover {{ background:color-mix(in srgb,var(--c) 7%, transparent); }}
+  .b-dot {{ flex:none; width:6px; height:6px; border-radius:50%; background:var(--c); opacity:.75;
+            transform:translateY(-2px); }}
+  .brief:hover .b-dot {{ opacity:1; box-shadow:0 0 0 4px color-mix(in srgb,var(--c) 22%, transparent); }}
+  .b-txt {{ font:500 14.5px/1.45 Inter; color:#c9cfdd; flex:1; min-width:0; }}
+  .brief:hover .b-txt {{ color:#fff; }}
+  .b-meta {{ flex:none; font:500 11.5px/1.4 Inter; color:var(--faint); white-space:nowrap; }}
+  .b-meta em {{ font-style:normal; color:var(--c); font-weight:600; }}
+  .more-note {{ font:400 13px/1 Inter; color:var(--faint); margin:20px 0 0; font-style:italic; }}
   @media (max-width:760px) {{ .card.featured {{ grid-column:span 1; padding:22px; }} }}
   footer.page {{
     margin-top:78px; padding-top:26px; border-top:1px solid rgba(255,255,255,.08);
@@ -421,33 +518,52 @@ def card_html(c, lang, featured=False, t=None) -> str:
         <p>{esc(c['snippet'])}</p>
         <footer>
           <span class="src">{esc(first['name'])}</span>
-          <span>&middot;</span><span>{esc(c['date'])}</span>
+          <span>&middot;</span><span>{esc(fmt_date(c['date'], lang))}</span>
           <a class="go" href="{esc(first['link'])}" target="_blank" rel="noopener">{esc(t['read'])} &rarr;</a>
         </footer>
       </article>"""
 
 
+def brief_html(c, lang, t=None) -> str:
+    """Compact one-line card for secondary stories."""
+    esc = html.escape
+    first = c["sources"][0]
+    extra = (f' <em>+{len(c["sources"]) - 1}</em>' if len(c["sources"]) > 1 else "")
+    return f"""
+        <a class="brief" href="{esc(first['link'])}" target="_blank" rel="noopener">
+          <span class="b-dot"></span>
+          <span class="b-txt">{esc(c['title'])}</span>
+          <span class="b-meta">{esc(first['name'])}{extra} · {esc(fmt_date(c['date'], lang))}</span>
+        </a>"""
+
+
 # ------------------------------------------------------------- markdown -----
-def render_md(clusters, meta, lang, generated, intro) -> str:
+def render_md(clusters, meta, lang, generated, intro, n_main=4, n_more=6) -> str:
     t = UI[lang]
     out = [f"# {t['title']} — {generated}", ""]
     if intro:
         out += [f"_{intro}_", ""]
-    for a in AREAS:
-        rows = [c for c in clusters if c["area"] == a["key"]]
-        if not rows:
-            continue
-        out += [f"## {a[lang][0]} ({len(rows)})", "", f"_{a[lang][1]}_", ""]
-        for c in rows:
+    for a, lead, main_rows, brief_rows, hidden in split_areas(clusters, n_main, n_more):
+        total = sum(1 for c in clusters if c["area"] == a["key"])
+        out += [f"## {a[lang][0]} ({total})", "", f"_{a[lang][1]}_", "",
+                f"### {t['main_label']}", ""]
+        for c in main_rows:
             names = " · ".join(s["name"] for s in c["sources"])
-            out += [f"- [{c['title']}]({c['sources'][0]['link']})  ",
-                    f"  {names} · {c['date']}  ",
-                    f"  {c['snippet']}", ""]
+            out += [f"- [**{c['title']}**]({c['sources'][0]['link']})  ",
+                    f"  {names} · {c['date']}  ", f"  {c['snippet']}", ""]
+        if brief_rows:
+            out += [f"### {t['sub_label']}", ""]
+            for c in brief_rows:
+                first = c["sources"][0]
+                out.append(f"- [{c['title']}]({first['link']}) — {first['name']} · {c['date']}")
+            out.append("")
+        if hidden:
+            out += [f"_{'+' + str(hidden)} {t['more_note']}_", ""]
     return "\n".join(out)
 
 
 # ------------------------------------------------------------- terminal -----
-def render_term(clusters, lang, generated, intro) -> str:
+def render_term(clusters, lang, generated, intro, n_main=4, n_more=6) -> str:
     t = UI[lang]
     w = 76
     dim, bold, reset = "\033[38;5;243m", "\033[1m", "\033[0m"
@@ -465,19 +581,26 @@ def render_term(clusters, lang, generated, intro) -> str:
         if cur:
             lines.append(f"  {dim}{cur}{reset}")
         lines.append("")
-    for a in AREAS:
-        rows = [c for c in clusters if c["area"] == a["key"]]
-        if not rows:
-            continue
-        c0 = None
+    for a, lead, main_rows, brief_rows, hidden in split_areas(clusters, n_main, n_more):
+        total = sum(1 for c in clusters if c["area"] == a["key"])
         ansi = lambda h: f"\033[38;2;{int(h[1:3],16)};{int(h[3:5],16)};{int(h[5:7],16)}m"
         lines.append(f"{ansi(a['color'])}{bold}{a[lang][0].upper()}{reset} "
-                     f"{dim}({len(rows)}){reset}")
-        for c in rows:
+                     f"{dim}({total}){reset}")
+        for c in main_rows:
             names = " · ".join(s["name"] for s in c["sources"][:3])
             lines.append(f"  {ansi(a['color'])}●{reset} \033[38;5;255m{bold}"
                          f"{c['title'][:w-4]}{reset}")
             lines.append(f"    {dim}{names} — {c['date']}{reset}")
+        if brief_rows:
+            lines.append(f"  {dim}{t['sub_label']}{reset}")
+            for c in brief_rows:
+                first = c["sources"][0]
+                extra = f" +{len(c['sources']) - 1}" if len(c["sources"]) > 1 else ""
+                lines.append(f"    {ansi(a['color'])}·{reset} {dim}"
+                             f"{c['title'][:w - 26]}{reset}")
+                lines.append(f"      {dim}{first['name']}{extra} — {c['date']}{reset}")
+        if hidden:
+            lines.append(f"  {dim}+{hidden} {t['more_note']}{reset}")
         lines.append("")
     return "\n".join(lines)
 
@@ -486,6 +609,7 @@ def render_term(clusters, lang, generated, intro) -> str:
 def main() -> None:
     argv = sys.argv[1:]
     path, lang, intro = None, "it", None
+    n_main, n_more = 4, 6
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -493,14 +617,19 @@ def main() -> None:
             lang = argv[i + 1]; i += 2
         elif a == "--intro":
             intro = argv[i + 1]; i += 2
-        elif a == "--title":
-            i += 2
+        elif a == "--main":
+            n_main = int(argv[i + 1]); i += 2
+        elif a == "--more":
+            n_more = int(argv[i + 1]); i += 2
         elif a.startswith("--"):
             i += 2
         else:
             path = a; i += 1
     if lang not in UI:
         print(f"Error: --lang must be one of {sorted(UI)}")
+        sys.exit(1)
+    if n_main < 1 or n_more < 0:
+        print("Error: --main must be >= 1 and --more >= 0")
         sys.exit(1)
 
     path = path or os.path.join(HERE, "ai-news.json")
@@ -512,31 +641,34 @@ def main() -> None:
     min_sim = 0.62
     clusters = cluster(raw, min_sim)
 
-    top_area = Counter(c["area"] for c in clusters).most_common(1)[0][0]
-    top_name = next(a for a in AREAS if a["key"] == top_area)[lang][0]
+    per_area = {a["key"]: sum(1 for c in clusters if c["area"] == a["key"])
+                for a in AREAS}
+    live = [v for v in per_area.values() if v]
+    spread = f"{min(live)}–{max(live)}" if live else "—"
     dates = [c["date"] for c in clusters if hours(c["date"]) < 9999]
-    window = f"{min(dates, key=hours)} → {max(dates, key=hours)}" if dates else "—"
+    window = (f"{fmt_date(max(dates, key=hours), lang)} → "
+              f"{fmt_date(min(dates, key=hours), lang)}") if dates else "—"
 
-    meta = dict(n=len(raw), c=len(clusters), a=sum(1 for a in AREAS
-              if any(c["area"] == a["key"] for c in clusters)),
-                b=top_name, w=window)
+    meta = dict(n=len(raw), c=len(clusters), a=len(live), g=spread, w=window)
     if lang == "it":
-        mesi = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
-                "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"]
         now = datetime.now()
-        generated = f"{now.day} {mesi[now.month - 1]} {now.year}"
+        generated = f"{now.day} {MESI_IT[now.month - 1]} {now.year}"
     else:
         generated = datetime.now().strftime("%d %B %Y")
 
-    print(render_term(clusters, lang, generated, intro))
-    print(f"  {len(raw)} stories -> {len(clusters)} eventi unici "
-          f"(similarita' >= {min_sim}), {meta['a']} aree\n")
+    print(render_term(clusters, lang, generated, intro, n_main, n_more))
+    print(f"  {len(raw)} storie -> {len(clusters)} eventi unici "
+          f"(similarita' >= {min_sim})")
+    print(f"  per area: {spread} | mostra {n_main} principali + {n_more} "
+          f"secondarie per area\n")
 
     suffix = "" if lang == "it" else f".{lang}"
     hp = os.path.join(HERE, f"ai-news{suffix}.html")
     mp = os.path.join(HERE, f"ai-news{suffix}.md")
-    open(hp, "w").write(render_html(clusters, meta, lang, intro, generated))
-    open(mp, "w").write(render_md(clusters, meta, lang, intro, generated))
+    open(hp, "w").write(
+        render_html(clusters, meta, lang, intro, generated, n_main, n_more))
+    open(mp, "w").write(
+        render_md(clusters, meta, lang, intro, generated, n_main, n_more))
     print(f"  scritto {hp}\n  scritto {mp}\n")
 
 
