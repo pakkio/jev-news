@@ -5,7 +5,7 @@ __pycache__/
 venv/
 .venv/
 
-# generated news digests (rebuild with format_news.py)
-ai-news.json
-ai-news.html
-ai-news.md
+# generated news digests (rebuild with collect_news.py + format_news.py)
+ai-news*.json
+ai-news*.html
+ai-news*.md
