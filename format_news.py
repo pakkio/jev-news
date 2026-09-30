@@ -402,7 +402,7 @@ def classify(title: str, snippet: str) -> tuple:
 
 # ------------------------------------------------------------------ html ----
 def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
-                hero=DEFAULT_HERO) -> str:
+                hero=DEFAULT_HERO, images="all") -> str:
     t = UI[lang]
     esc = html.escape
     L = (lambda i: i) if lang == "it" else (lambda i: i)
@@ -431,9 +431,11 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
           <h4>{esc(show(lead))}</h4>
           <span class="spot-s">{esc(lead['sources'][0]['name'])} · {esc(fmt_date(lead['date'], lang))}</span>
         </a>""")
-        cards = [card_html(r, lang, featured=(i == 0), t=t)
+        cards = [card_html(r, lang, featured=(i == 0), t=t,
+                           image=(images != "off"))
                  for i, r in enumerate(main_rows)]
-        briefs = "".join(brief_html(r, lang, t=t) for r in brief_rows)
+        briefs = "".join(brief_html(r, lang, t=t, image=(images == "all"))
+                         for r in brief_rows)
         more = (f'<p class="more-note">+ {hidden} {esc(t["more_note"])}</p>'
                 if hidden else "")
         sections.append(f"""
@@ -602,6 +604,27 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
   .more-srcs a:hover {{ filter:brightness(1.3); }}
   .rank {{ position:absolute; top:15px; right:19px; font:700 25px/1 "Space Grotesk"; color:rgba(255,255,255,.07); }}
   .rank.feat {{ top:20px; right:24px; font-size:34px; }}
+  .thumb {{
+    position:relative; margin:-22px -22px 16px; aspect-ratio:16/9; overflow:hidden;
+    background:#0b0d13; border-bottom:1px solid rgba(255,255,255,.07);
+  }}
+  .thumb.big {{ margin:-28px -28px 20px; aspect-ratio:21/9; }}
+  .thumb img {{ width:100%; height:100%; object-fit:cover; display:block; opacity:.92; }}
+  .thumb::after {{
+    content:""; position:absolute; inset:0; pointer-events:none;
+    background:linear-gradient(180deg,rgba(8,9,13,.16) 0%,transparent 42%,rgba(8,9,13,.5) 100%);
+  }}
+  .thumb .photo-credit {{
+    position:absolute; right:9px; bottom:7px; z-index:2; max-width:62%;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font:500 9.5px/1 Inter; letter-spacing:.1em; text-transform:uppercase;
+    color:rgba(255,255,255,.62); background:rgba(8,9,13,.62);
+    padding:4px 7px; border-radius:5px;
+  }}
+  .b-thumb {{
+    flex:none; width:44px; height:32px; border-radius:5px; object-fit:cover;
+    background:#0b0d13; align-self:center;
+  }}
 
   h3.sub-label {{
     font:600 10.5px/1 Inter; letter-spacing:.22em; text-transform:uppercase;
@@ -658,7 +681,24 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
 """
 
 
-def card_html(c, lang, featured=False, t=None) -> str:
+def thumb_html(c: dict, lang: str, big: bool = False) -> str:
+    """Story illustration, or nothing. Self-hiding: publisher CDNs sometimes
+    refuse a hotlink, and a card with a torn-off image looks worse than a card
+    without one."""
+    row = c.get("img") or {}
+    if not row.get("url"):
+        return ""
+    esc = html.escape
+    return f"""
+        <div class="thumb{' big' if big else ''}">
+          <img src="{esc(row['url'])}" alt="{esc(c['title'])}" loading="lazy"
+               decoding="async" referrerpolicy="no-referrer"
+               onerror="this.parentNode.remove()">
+          <span class="photo-credit">{esc(row.get('credit') or 'foto')}</span>
+        </div>"""
+
+
+def card_html(c, lang, featured=False, t=None, image=True) -> str:
     esc = html.escape
     src = c["sources"]
     first = src[0]
@@ -672,6 +712,7 @@ def card_html(c, lang, featured=False, t=None) -> str:
     return f"""
       <article class="card{' featured' if featured else ''}" style="--c:{c['color']}">
         <div class="rank{' feat' if featured else ''}">{len(c['sources']) if len(c['sources']) > 1 else ''}</div>
+        {thumb_html(c, lang, big=featured) if image else ''}
         {extra}
         <h3><a href="{esc(first['link'])}" target="_blank" rel="noopener" title="{esc(c['title'])}">{esc(show(c))}</a></h3>
         <p>{esc(show(c, 'snippet'))}</p>
@@ -683,14 +724,19 @@ def card_html(c, lang, featured=False, t=None) -> str:
       </article>"""
 
 
-def brief_html(c, lang, t=None) -> str:
+def brief_html(c, lang, t=None, image=True) -> str:
     """Compact one-line card for secondary stories."""
     esc = html.escape
     first = c["sources"][0]
     extra = (f' <em>+{len(c["sources"]) - 1}</em>' if len(c["sources"]) > 1 else "")
+    row = c.get("img") or {}
+    pic = (f'<img class="b-thumb" src="{esc(row["url"])}" alt="" loading="lazy"'
+           f' decoding="async" referrerpolicy="no-referrer"'
+           f' onerror="this.remove()">') if (image and row.get("url")) else ""
     return f"""
         <a class="brief" href="{esc(first['link'])}" target="_blank" rel="noopener">
           <span class="b-dot"></span>
+          {pic}
           <span class="b-txt" title="{esc(c['title'])}">{esc(show(c))}</span>
           <span class="b-meta">{esc(first['name'])}{extra} · {esc(fmt_date(c['date'], lang))}</span>
         </a>"""
@@ -771,6 +817,7 @@ def main() -> None:
     n_main, n_more = 4, 6
     min_sim, show_folded = 0.62, False
     do_translate, model, hero = False, "openai/gpt-4o-mini", DEFAULT_HERO
+    images = "all"
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -795,6 +842,8 @@ def main() -> None:
             model = argv[i + 1]; i += 2
         elif a == "--hero":
             hero = argv[i + 1]; i += 2
+        elif a == "--images":
+            images = argv[i + 1]; i += 2
         elif a.startswith("--"):
             i += 2
         else:
@@ -813,6 +862,21 @@ def main() -> None:
     raw.sort(key=lambda x: hours(x["date"]))
 
     clusters = cluster(raw, min_sim)
+
+    if images != "off":
+        import images as IMG
+        shown = [c for c in clusters]
+        print("  immagini per le storie (Serper Images)...")
+        cache, ist = IMG.fetch([c["title"] for c in shown],
+                               lang=lang, quiet=(lang == "en"),
+                               want={c["title"]: [s["link"] for s in c["sources"]]
+                                     for c in clusters})
+        for c in clusters:
+            row = IMG.lookup(cache, c["title"])
+            if row:
+                c["img"] = row
+        print(f"  trovate {ist['found']}, dalla cache {ist['cached']}, "
+              f"nessuna {ist['empty']}\n")
 
     if do_translate:
         import translate as TR
@@ -866,9 +930,13 @@ def main() -> None:
             and not hero.startswith(("http://", "https://")):
         print(f"Error: --hero must be one of {sorted(HEROES)}, 'off', or a URL")
         sys.exit(1)
+    if images not in ("all", "main", "off"):
+        print("Error: --images must be one of all, main, off")
+        sys.exit(1)
 
     open(hp, "w").write(
-        render_html(clusters, meta, lang, intro, generated, n_main, n_more, hero))
+        render_html(clusters, meta, lang, intro, generated, n_main, n_more,
+                    hero, images))
     open(mp, "w").write(
         render_md(clusters, meta, lang, intro, generated, n_main, n_more))
     print(f"  scritto {hp}\n  scritto {mp}\n")

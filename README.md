@@ -59,6 +59,7 @@ python3 format_news.py --lang it --intro "..." [--main 4] [--more 6] [--folded]
 | `--translate` | translate titles and snippets into Italian (see below) |
 | `--model M` | model used for translation (default `openai/gpt-4o-mini`) |
 | `--hero N` | banner image: `earth` (default), `circuit`, `code`, `robot`, `laptop`, `off`, or any URL |
+| `--images M` | story images: `all` (default), `main` (lead cards only), `off` |
 
 Grouped into five thematic areas (Politica e sicurezza, Modelli e ricerca,
 Chip e infrastrutture, Business, Settore), each with its own accent colour and
@@ -89,6 +90,8 @@ Jaccard, which a short title cannot game.
 
 Run `--folded` to see every merge and its sources before trusting it.
 
+### Italian titles and snippets
+
 ### The hero image
 
 A 236px banner from Unsplash, hotlinked free, masked so it dissolves into the
@@ -107,7 +110,41 @@ degrades to the plain header rather than a broken-icon box. Attribution for
 these reads "Unsplash Contributor" rather than a named photographer, so the
 page credits Unsplash and links out instead of guessing a name.
 
-### Italian titles and snippets
+### Story images
+
+`images.py` uses Serper's Images endpoint, so it stays inside the Serper + Jina
+chain - no extra key, no image service. Lead cards get a 16:9 banner, the
+featured one 21:9, secondary rows a 44px thumbnail, each with a visible
+`Foto: <publisher>` credit because the picture belongs to the publisher.
+
+Two things that searching Google Images on a headline gets wrong, and how they
+are handled:
+
+- **Relevance.** Serper returns the page each image lives on, so candidates
+  from the same publisher as the article are tried first - that is the
+  article's own header photo. Stock agencies, screenshot-of-an-article
+  thumbnails, Reddit avatars and LinkedIn cards are rejected outright. About
+  half the images now come from the article's own domain.
+- **Broken hotlinks.** Publisher CDNs lie. Facebook lookaside URLs answer
+  `200` with a 388-byte placeholder, Reuters resizer URLs want exact width
+  parameters, tweets go `404`. Every candidate is checked with a ranged GET
+  that verifies the magic bytes before it is cached, and every `<img>` in the
+  page still carries an `onerror` that removes itself, so a refused host
+  degrades to a plain card.
+
+```bash
+python3 format_news.py --images all     # 20 card + 30 miniature
+python3 format_news.py --images main    # solo le card principali, pagina leggera
+python3 format_news.py --images off
+```
+
+Serper returns full-size originals, so `main` is the lighter option: `all`
+pulls tens of megabytes as you scroll. Images load lazily.
+
+The known limit: Google Images still occasionally returns a screenshot of a
+page rather than a photograph, and domain matching cannot catch it. Taking the
+real `og:image` from each article would fix that, but that means fetching
+every article - outside the Serper + Jina chain you asked to stay inside.
 
 The page chrome is Italian out of the box; headlines and snippets come from
 the sources in English. `--translate` sends them through OpenRouter
