@@ -164,6 +164,11 @@ AGGI = {"minute": ("minuto", "minuti"), "hour": ("ora", "ore"),
         "month": ("mese", "mesi")}
 
 
+def show(c: dict, field: str = "title") -> str:
+    """Translated text when available, English otherwise."""
+    return c.get(f"{field}_it") or c[field]
+
+
 def fmt_date(d: str, lang: str) -> str:
     """Serper emits English relative dates; an Italian page should not."""
     d = (d or "").strip()
@@ -378,7 +383,7 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6) -> s
         spotlight.append(f"""
         <a class="spot" href="{esc(lead['sources'][0]['link'])}" target="_blank" rel="noopener" style="--c:{a['color']}">
           <span class="spot-n">{counts[a['key']]:02d}</span>
-          <h4>{esc(lead['title'])}</h4>
+          <h4>{esc(show(lead))}</h4>
           <span class="spot-s">{esc(lead['sources'][0]['name'])} · {esc(fmt_date(lead['date'], lang))}</span>
         </a>""")
         cards = [card_html(r, lang, featured=(i == 0), t=t)
@@ -598,8 +603,8 @@ def card_html(c, lang, featured=False, t=None) -> str:
       <article class="card{' featured' if featured else ''}" style="--c:{c['color']}">
         <div class="rank{' feat' if featured else ''}">{len(c['sources']) if len(c['sources']) > 1 else ''}</div>
         {extra}
-        <h3><a href="{esc(first['link'])}" target="_blank" rel="noopener">{esc(c['title'])}</a></h3>
-        <p>{esc(c['snippet'])}</p>
+        <h3><a href="{esc(first['link'])}" target="_blank" rel="noopener" title="{esc(c['title'])}">{esc(show(c))}</a></h3>
+        <p>{esc(show(c, 'snippet'))}</p>
         <footer>
           <span class="src">{esc(first['name'])}</span>
           <span>&middot;</span><span>{esc(fmt_date(c['date'], lang))}</span>
@@ -616,7 +621,7 @@ def brief_html(c, lang, t=None) -> str:
     return f"""
         <a class="brief" href="{esc(first['link'])}" target="_blank" rel="noopener">
           <span class="b-dot"></span>
-          <span class="b-txt">{esc(c['title'])}</span>
+          <span class="b-txt" title="{esc(c['title'])}">{esc(show(c))}</span>
           <span class="b-meta">{esc(first['name'])}{extra} · {esc(fmt_date(c['date'], lang))}</span>
         </a>"""
 
@@ -633,13 +638,13 @@ def render_md(clusters, meta, lang, generated, intro, n_main=4, n_more=6) -> str
                 f"### {t['main_label']}", ""]
         for c in main_rows:
             names = " · ".join(s["name"] for s in c["sources"])
-            out += [f"- [**{c['title']}**]({c['sources'][0]['link']})  ",
-                    f"  {names} · {c['date']}  ", f"  {c['snippet']}", ""]
+            out += [f"- [**{show(c)}**]({c['sources'][0]['link']})  ",
+                    f"  {names} · {fmt_date(c['date'], lang)}  ", f"  {show(c, 'snippet')}", ""]
         if brief_rows:
             out += [f"### {t['sub_label']}", ""]
             for c in brief_rows:
                 first = c["sources"][0]
-                out.append(f"- [{c['title']}]({first['link']}) — {first['name']} · {c['date']}")
+                out.append(f"- [{show(c)}]({first['link']}) — {first['name']} · {fmt_date(c['date'], lang)}")
             out.append("")
         if hidden:
             out += [f"_{'+' + str(hidden)} {t['more_note']}_", ""]
@@ -673,7 +678,7 @@ def render_term(clusters, lang, generated, intro, n_main=4, n_more=6) -> str:
         for c in main_rows:
             names = " · ".join(s["name"] for s in c["sources"][:3])
             lines.append(f"  {ansi(a['color'])}●{reset} \033[38;5;255m{bold}"
-                         f"{c['title'][:w-4]}{reset}")
+                         f"{show(c)[:w-4]}{reset}")
             lines.append(f"    {dim}{names} — {c['date']}{reset}")
         if brief_rows:
             lines.append(f"  {dim}{t['sub_label']}{reset}")
@@ -681,7 +686,7 @@ def render_term(clusters, lang, generated, intro, n_main=4, n_more=6) -> str:
                 first = c["sources"][0]
                 extra = f" +{len(c['sources']) - 1}" if len(c["sources"]) > 1 else ""
                 lines.append(f"    {ansi(a['color'])}·{reset} {dim}"
-                             f"{c['title'][:w - 26]}{reset}")
+                             f"{show(c)[:w - 26]}{reset}")
                 lines.append(f"      {dim}{first['name']}{extra} — {c['date']}{reset}")
         if hidden:
             lines.append(f"  {dim}+{hidden} {t['more_note']}{reset}")
@@ -695,6 +700,7 @@ def main() -> None:
     path, lang, intro = None, "it", None
     n_main, n_more = 4, 6
     min_sim, show_folded = 0.62, False
+    do_translate, model = False, "openai/gpt-4o-mini"
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -713,6 +719,10 @@ def main() -> None:
             sys.exit(1)
         elif a == "--folded":
             show_folded = not show_folded; i += 1
+        elif a in ("--translate", "--tr"):
+            do_translate = not do_translate; i += 1
+        elif a == "--model":
+            model = argv[i + 1]; i += 2
         elif a.startswith("--"):
             i += 2
         else:
@@ -731,6 +741,20 @@ def main() -> None:
     raw.sort(key=lambda x: hours(x["date"]))
 
     clusters = cluster(raw, min_sim)
+
+    if do_translate:
+        import translate as TR
+        print("  traduzione in italiano (dopo il clustering, mai prima)...")
+        cache, st = TR.translate(
+            [{"title": c["title"], "snippet": c["snippet"]} for c in clusters],
+            model=model, quiet=lang == "en")
+        for c in clusters:
+            row = TR.lookup(cache, c["title"], c["snippet"])
+            if row:
+                c["title_it"] = row["title"]
+                c["snippet_it"] = row["snippet"]
+        print(f"  tradotte {st['translated']}, dalla cache {st['cached']}, "
+              f"fallite {st['failed']}\n")
 
     per_area = {a["key"]: sum(1 for c in clusters if c["area"] == a["key"])
                 for a in AREAS}

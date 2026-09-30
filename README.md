@@ -56,6 +56,8 @@ python3 format_news.py --lang it --intro "..." [--main 4] [--more 6] [--folded]
 | `--more N` | secondary cards shown per area (default 6) |
 | `--sim F` | same-event merge threshold (default 0.62) |
 | `--folded` | list every merge, with its folded titles - check the clustering |
+| `--translate` | translate titles and snippets into Italian (see below) |
+| `--model M` | model used for translation (default `openai/gpt-4o-mini`) |
 
 Grouped into five thematic areas (Politica e sicurezza, Modelli e ricerca,
 Chip e infrastrutture, Business, Settore), each with its own accent colour and
@@ -85,6 +87,23 @@ education, so below three tokens and two shared words the score falls back to
 Jaccard, which a short title cannot game.
 
 Run `--folded` to see every merge and its sources before trusting it.
+
+### Italian titles and snippets
+
+The page chrome is Italian out of the box; headlines and snippets come from
+the sources in English. `--translate` sends them through OpenRouter
+(`openai/gpt-4o-mini`, about $0.03 for 130 stories) and keeps proper nouns
+untouched, so *OpenAI*, *DeepSeek* and *Hugging Face* stay in English inside
+Italian sentences.
+
+Translation runs **after** clustering, never before: the same-event matcher
+reads the English titles, and a translated headline loses both the proper
+nouns and the word overlap it depends on.
+
+Results are cached in `ai-news.it.json`, keyed by a hash of the English source,
+so only genuinely new stories cost anything. A second run over an unchanged
+corpus takes 0.3s and spends nothing. The original English title stays in the
+`title` attribute of every link, so hovering a headline shows the source text.
 
 Display is capped per area (`--main` + `--more`) so every section comes out
 the same size whatever the raw counts; the badge and the `+N` note still

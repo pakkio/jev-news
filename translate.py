@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Translate news titles and snippets into Italian via OpenRouter.
+
+Runs after clustering, never before: the English titles are what the
+same-event matcher reads, and a translated title loses the proper nouns and the
+word overlap the matcher depends on.
+
+Results are cached on disk keyed by a hash of the English source, so a second
+run is free and only genuinely new stories cost anything.
+"""
+
+import hashlib
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_MODEL = "openai/gpt-4o-mini"
+API = "https://openrouter.ai/api/v1/chat/completions"
+
+PROMPT = """\
+Traduci in italiano naturale e giornalistico, senza parafrasi.
+Risponci ESCLUSIVAMENTE con un oggetto JSON, senza testo attorno.
+
+Regole:
+- lascia in inglese i nomi propri: aziende, prodotti, persone, luoghi, sigle
+  (es. OpenAI, DeepSeek, Hugging Face, Nvidia, Wall Street, UE);
+- non aggiungere e non togliere informazione;
+- se una stringa contiene gia' dell'italiano, copiala identica;
+- se una stringa e' vuota, restituisci stringa vuota.
+
+Formato: {"<id>": {"t": "<titolo>", "s": "<snippet>"}}
+
+Frammenti da tradurre:
+%s"""
+
+
+def load_key() -> str:
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    if key:
+        return key
+    path = os.path.join(HERE, "..", ".env")
+    if os.path.exists(path):
+        for line in open(path):
+            line = line.strip()
+            if line.startswith("OPENROUTER_API_KEY="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    raise SystemExit("Error: OPENROUTER_API_KEY not set (and no ../.env).")
+
+
+def digest(title: str, snippet: str) -> str:
+    return hashlib.sha1(f"{title}\x00{snippet}".encode()).hexdigest()[:16]
+
+
+def load_cache(path: str) -> dict:
+    if os.path.exists(path):
+        try:
+            return json.load(open(path))
+        except (ValueError, OSError):
+            return {}
+    return {}
+
+
+def save_cache(path: str, cache: dict) -> None:
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as fh:
+        json.dump(cache, fh, ensure_ascii=False, indent=0)
+    os.replace(tmp, path)
+
+
+def call(key: str, model: str, payload: str, retries: int = 3) -> dict:
+    body = {"model": model, "temperature": 0,
+            "messages": [{"role": "user", "content": payload}]}
+    req = urllib.request.Request(
+        API, data=json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {key}",
+                 "Content-Type": "application/json",
+                 "HTTP-Referer": "https://github.com/pakkio/search",
+                 "X-Title": "AI Briefing"})
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(req, timeout=90) as r:
+                return json.loads(r.read())["choices"][0]["message"]["content"]
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503) and attempt < retries - 1:
+                time.sleep(2 ** (attempt + 1))
+                continue
+            raise RuntimeError(f"OpenRouter HTTP {e.code}: {e.read()[:120]!r}")
+        except Exception:
+            if attempt < retries - 1:
+                time.sleep(2 ** (attempt + 1))
+                continue
+            raise
+    return "{}"
+
+
+def extract_json(text: str) -> dict:
+    """Models sometimes wrap JSON in a fence or prose; be forgiving."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        text = text[4:] if text.lower().startswith("json") else text
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < start:
+        return {}
+    try:
+        return json.loads(text[start:end + 1])
+    except ValueError:
+        return {}
+
+
+def translate(pairs: list, model: str = DEFAULT_MODEL, batch: int = 10,
+              cache_path: str = None, quiet: bool = False) -> tuple:
+    """pairs: [{"title":..., "snippet":...}] -> (cache dict, stats dict)."""
+    key = load_key()
+    cache_path = cache_path or os.path.join(HERE, "ai-news.it.json")
+    cache = load_cache(cache_path)
+    todo = []
+    for p in pairs:
+        d = digest(p["title"], p.get("snippet", ""))
+        if d not in cache:
+            todo.append((d, p))
+    stats = {"cached": len(pairs) - len(todo), "translated": 0, "failed": 0}
+
+    for i in range(0, len(todo), batch):
+        chunk = todo[i:i + batch]
+        numbered = "\n".join(
+            f'{j}. "t": {json.dumps(p["title"], ensure_ascii=False)},'
+            f' "s": {json.dumps(p.get("snippet", ""), ensure_ascii=False)}'
+            for j, (_, p) in enumerate(chunk))
+        try:
+            got = extract_json(call(key, model, PROMPT % numbered))
+        except Exception as e:  # noqa: BLE001
+            print(f"  ! batch failed: {str(e)[:100]}", file=sys.stderr)
+            stats["failed"] += len(chunk)
+            continue
+        for j, (d, p) in enumerate(chunk):
+            row = got.get(str(j)) or got.get(j)
+            if not row:
+                stats["failed"] += 1
+                continue
+            cache[d] = {"t": row.get("t") or p["title"],
+                        "s": row.get("s") or p.get("snippet", "")}
+            stats["translated"] += 1
+        save_cache(cache_path, cache)
+        if not quiet:
+            done = min(i + batch, len(todo))
+            print(f"  tradotte {done}/{len(todo)} "
+                  f"(cache: {stats['cached']}, fallite: {stats['failed']})")
+    return cache, stats
+
+
+def lookup(cache: dict, title: str, snippet: str) -> dict:
+    row = cache.get(digest(title, snippet or ""))
+    if not row:
+        return {}
+    return {"title": row.get("t", ""), "snippet": row.get("s", "")}
