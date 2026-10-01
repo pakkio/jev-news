@@ -89,6 +89,9 @@ UI = {
         main_label="Notizie principali", sub_label="Secondarie",
         more_note="altre in quest'area",
         sources="fonti", sources_one="fonte", read="leggi",
+        summary="Riassunto", orig="Leggi l'articolo originale", close="Chiudi",
+        no_sum="Riassunto non disponibile (articolo non accessibile): ecco l'anteprima.",
+        other_src="Altre fonti",
         window="Finestra", areas="aree", clusters="eventi unici",
         beat="area più coperta", generated="Generato il", source="fonte",
         more="e altre", footer_note="Chiavi mai incluse in questo file.",
@@ -105,6 +108,9 @@ UI = {
         main_label="Lead stories", sub_label="Briefs",
         more_note="more in this area",
         sources="sources", sources_one="source", read="read",
+        summary="Summary", orig="Read the original article", close="Close",
+        no_sum="Summary unavailable (article not accessible): here is the preview.",
+        other_src="Other sources",
         window="Window", areas="areas", clusters="unique events",
         beat="most-covered beat", generated="Generated", source="source",
         more="more", footer_note="No key material in this file.",
@@ -455,6 +461,18 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
         {more}
       </section>""")
 
+    payload = {}
+    for _, _, main_rows, _, _ in split_areas(clusters, n_main, n_more):
+        for c in main_rows:
+            first = c["sources"][0]
+            payload[c["sid"]] = dict(
+                title=show(c),
+                meta=f"{first['name']} · {fmt_date(c['date'], lang)}",
+                text=c.get("summary") or show(c, "snippet"),
+                ok=bool(c.get("summary")) or lang != "it", link=first["link"],
+                others=[[x["name"], x["link"]] for x in c["sources"][1:6]])
+    stories_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
+
     intro_html = (
         f'<p class="intro">{esc(intro)}</p>' if intro else ""
     )
@@ -594,7 +612,8 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
   .card p {{ margin:0 0 15px; color:var(--mute); font-size:14px; line-height:1.58; }}
   .card footer {{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12px; color:var(--faint); }}
   .src {{ color:#cfd4e0; font-weight:500; }}
-  .go {{ margin-left:auto; color:var(--c); text-decoration:none; font-weight:600; }}
+  .go {{ margin-left:auto; color:var(--c); font:600 12px/1 Inter; background:none; border:0;
+         padding:4px 0; cursor:pointer; }}
   .go:hover {{ filter:brightness(1.25); }}
   .more-srcs {{
     display:inline-flex; gap:6px; margin:0 0 13px; padding:0; list-style:none; flex-wrap:wrap;
@@ -649,6 +668,30 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
   .b-meta em {{ font-style:normal; color:var(--c); font-weight:600; }}
   .more-note {{ font:400 13px/1 Inter; color:var(--faint); margin:20px 0 0; font-style:italic; }}
   @media (max-width:760px) {{ .card.featured {{ grid-column:span 1; padding:22px; }} }}
+  dialog.pop {{
+    width:min(620px,calc(100vw - 32px)); max-height:calc(100vh - 48px); padding:0; border-radius:16px;
+    color:var(--fg); background:#0e1018; border:1px solid color-mix(in srgb,var(--c,#7aa2f7) 40%, transparent);
+    box-shadow:0 30px 80px -20px rgba(0,0,0,.8);
+  }}
+  dialog.pop::backdrop {{ background:rgba(4,5,9,.72); backdrop-filter:blur(3px); }}
+  dialog.pop[open] {{ animation:pop .18s ease; }}
+  @keyframes pop {{ from {{ opacity:0; transform:translateY(8px) scale(.98); }} }}
+  .pop-in {{ padding:28px 28px 24px; border-top:3px solid var(--c,#7aa2f7); }}
+  .pop-k {{ font:600 10.5px/1 Inter; letter-spacing:.22em; text-transform:uppercase; color:var(--c,#7aa2f7); }}
+  .pop h3 {{ font:600 21px/1.3 "Space Grotesk"; margin:12px 0 4px; }}
+  .pop-meta {{ font:500 12px/1 Inter; color:var(--faint); margin:0 0 18px; }}
+  .pop-body {{ font:400 17px/1.7 "Newsreader", Georgia, serif; color:#d3d8e4; margin:0; }}
+  .pop-note {{ font:italic 400 13px/1.5 Inter; color:var(--faint); margin:14px 0 0; }}
+  .pop-act {{ display:flex; flex-wrap:wrap; align-items:center; gap:14px; margin-top:24px; }}
+  .pop-link {{
+    padding:10px 16px; border-radius:10px; text-decoration:none; font:600 13px/1 Inter;
+    color:#08090d; background:var(--c,#7aa2f7);
+  }}
+  .pop-link:hover {{ filter:brightness(1.12); }}
+  .pop-close {{ margin-left:auto; background:none; border:0; color:var(--mute); font:500 13px/1 Inter; cursor:pointer; }}
+  .pop-close:hover {{ color:#fff; }}
+  .pop-srcs {{ margin:18px 0 0; font:500 12px/1.9 Inter; color:var(--faint); }}
+  .pop-srcs a {{ color:var(--mute); margin-right:12px; }}
   footer.page {{
     margin-top:78px; padding-top:26px; border-top:1px solid rgba(255,255,255,.08);
     color:var(--faint); font-size:12px; line-height:1.9; text-align:center;
@@ -679,6 +722,49 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
       {esc(t['footer_note'])}
     </footer>
   </div>
+  <dialog class="pop" id="pop" aria-labelledby="pop-t">
+    <div class="pop-in">
+      <div class="pop-k">{esc(t['summary'])}</div>
+      <h3 id="pop-t"></h3>
+      <p class="pop-meta" id="pop-m"></p>
+      <p class="pop-body" id="pop-b"></p>
+      <p class="pop-note" id="pop-n" hidden>{esc(t['no_sum'])}</p>
+      <p class="pop-srcs" id="pop-s" hidden>{esc(t['other_src'])}: <span id="pop-sl"></span></p>
+      <div class="pop-act">
+        <a class="pop-link" id="pop-a" target="_blank" rel="noopener">{esc(t['orig'])} &rarr;</a>
+        <button type="button" class="pop-close" id="pop-x">{esc(t['close'])} (Esc)</button>
+      </div>
+    </div>
+  </dialog>
+  <script type="application/json" id="stories">{stories_json}</script>
+  <script>
+    (function () {{
+      var data = JSON.parse(document.getElementById('stories').textContent);
+      var d = document.getElementById('pop'), $ = function (i) {{ return document.getElementById(i); }};
+      function open(sid, color) {{
+        var s = data[sid]; if (!s) return;
+        d.style.setProperty('--c', color);
+        $('pop-t').textContent = s.title;
+        $('pop-m').textContent = s.meta;
+        $('pop-b').textContent = s.text;
+        $('pop-n').hidden = s.ok;
+        $('pop-a').href = s.link;
+        var box = $('pop-sl'); box.textContent = '';
+        s.others.forEach(function (o) {{
+          var a = document.createElement('a'); a.href = o[1]; a.textContent = o[0];
+          a.target = '_blank'; a.rel = 'noopener'; box.appendChild(a);
+        }});
+        $('pop-s').hidden = !s.others.length;
+        d.showModal();
+      }}
+      document.addEventListener('click', function (e) {{
+        var b = e.target.closest('.go[data-sid]');
+        if (b) open(b.dataset.sid, getComputedStyle(b.closest('.card')).getPropertyValue('--c'));
+        else if (e.target === d) d.close();       // click on the backdrop
+      }});
+      $('pop-x').addEventListener('click', function () {{ d.close(); }});
+    }})();
+  </script>
 </body>
 </html>
 """
@@ -722,7 +808,7 @@ def card_html(c, lang, featured=False, t=None, image=True) -> str:
         <footer>
           <span class="src">{esc(first['name'])}</span>
           <span>&middot;</span><span>{esc(fmt_date(c['date'], lang))}</span>
-          <a class="go" href="{esc(first['link'])}" target="_blank" rel="noopener">{esc(t['read'])} &rarr;</a>
+          <button type="button" class="go" data-sid="{esc(c.get('sid', ''))}">{esc(t['read'])} &rarr;</button>
         </footer>
       </article>"""
 
@@ -819,8 +905,8 @@ def main() -> None:
     path, lang, intro = None, "it", None
     n_main, n_more = 4, 6
     min_sim, show_folded = 0.62, False
-    do_translate, model, hero = False, "openai/gpt-4o-mini", DEFAULT_HERO
-    images = "all"
+    do_translate, model, hero = False, "openrouter/free", DEFAULT_HERO
+    images, summaries = "all", False
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -845,6 +931,8 @@ def main() -> None:
             model = argv[i + 1]; i += 2
         elif a == "--hero":
             hero = argv[i + 1]; i += 2
+        elif a == "--summaries":
+            summaries = not summaries; i += 1
         elif a == "--images":
             images = argv[i + 1]; i += 2
         elif a.startswith("--"):
@@ -899,6 +987,21 @@ def main() -> None:
                 c["snippet_it"] = row["snippet"]
         print(f"  tradotte {st['translated']}, dalla cache {st['cached']}, "
               f"fallite {st['failed']}\n")
+
+    for n, c in enumerate(clusters):
+        c["sid"] = f"s{n}"
+    if summaries and lang == "it":
+        import summarize as SM
+        print("  riassunti degli articoli (Jina + OpenRouter)...")
+        shown = [c for _, _, rows, _, _ in split_areas(clusters, n_main, n_more)
+                 for c in rows]
+        cache, sst = SM.summarize(
+            [{"title": c["title"], "links": [x["link"] for x in c["sources"]]}
+             for c in shown], model=model, quiet=(lang == "en"))
+        for c in shown:
+            c["summary"] = SM.lookup(cache, c["title"])
+        print(f"  nuovi {sst['done']}, dalla cache {sst['cached']}, "
+              f"non disponibili {sst['empty']}\n")
 
     per_area = {a["key"]: sum(1 for c in clusters if c["area"] == a["key"])
                 for a in AREAS}

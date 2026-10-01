@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_MODEL = "openai/gpt-4o-mini"
+DEFAULT_MODEL = "openrouter/free"
 API = "https://openrouter.ai/api/v1/chat/completions"
 
 PROMPT = """\
