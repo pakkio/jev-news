@@ -188,11 +188,13 @@ def verdict(key: str, text: str, summary: str):
 
 
 def vet(key: str, title: str, text: str, summary: str, quiet: bool, log=print):
-    """Lint + fact check with one repair attempt.
+    """Lint + fact check, with up to two regenerations that get the problems fed back.
 
-    Returns the summary that passed, "" when it could not be fixed, or None when
+    The checker is noisy: five summaries it rejected after one repair all passed
+    first time when regenerated, so a single failed round must not be final.
+    Returns the summary that passed, "" after three failed rounds, or None when
     the checker itself was unavailable (nothing is decided, retry next run)."""
-    for attempt in range(2):
+    for attempt in range(3):
         problems = lint(summary)
         if not problems:
             found = verdict(key, text, summary)
@@ -203,7 +205,7 @@ def vet(key: str, title: str, text: str, summary: str, quiet: bool, log=print):
             return summary
         if not quiet:
             log(f"      controllo: {'; '.join(problems)[:150]}")
-        if attempt == 1:
+        if attempt == 2:
             break
         fixed = ask(key, STRONG, title, text, quiet, tries=2, feedback=problems, log=log)
         if not fixed or fixed.upper().startswith("NONE"):
