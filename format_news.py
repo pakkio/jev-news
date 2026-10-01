@@ -436,7 +436,7 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
     for a, lead, main_rows, brief_rows, hidden in split_areas(clusters, n_main, n_more):
         spotlight.append(f"""
         <a class="spot" href="{esc(lead['sources'][0]['link'])}" target="_blank" rel="noopener" style="--c:{a['color']}">
-          <span class="spot-n">{counts[a['key']]:02d}</span>
+          <span class="spot-n">{len(lead['sources']) if len(lead['sources']) > 1 else ''}</span>
           <h4>{esc(show(lead))}</h4>
           <span class="spot-s">{esc(lead['sources'][0]['name'])} · {esc(fmt_date(lead['date'], lang))}</span>
         </a>""")
