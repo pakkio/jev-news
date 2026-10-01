@@ -99,6 +99,7 @@ UI = {
         legend="la composizione della settimana", no_intro="",
         thread_k="Storia in evoluzione", thread_n="episodi", thread_generic="Episodi collegati",
         thread_tema="Tema ricorrente", thread_n_tema="storie", single="fonte unica",
+        score_tip="Punteggio di rilevanza: freschezza + numero di fonti + parole del titolo (vedi Fonti e metodo)",
         weights_h="Come si calcola l'ordine", weights_note=(
             "Punteggio = freschezza (fino a 30 punti, in calo nell'arco di circa 5 giorni) "
             "+ 5 punti per ogni fonte (fino a 5) + fino a 6 punti per uno snippet informativo "
@@ -136,6 +137,7 @@ UI = {
         legend="how the week broke down", no_intro="",
         thread_k="Developing story", thread_n="episodes", thread_generic="Related episodes",
         thread_tema="Recurring theme", thread_n_tema="stories", single="single source",
+        score_tip="Relevance score: freshness + number of sources + headline words (see Sources & method)",
         weights_h="How the order is computed", weights_note=(
             "Score = freshness (up to 30 points, decaying over about 5 days) + 5 points per "
             "source (up to 5) + up to 6 points for an informative snippet + a bonus for the "
@@ -702,7 +704,7 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
             clusters, n_main, n_more, skip_threaded=bool(threads)):
         spotlight.append(f"""
         <a class="spot" href="{esc(lead['sources'][0]['link'])}" target="_blank" rel="noopener" style="--c:{a['color']}">
-          <span class="spot-n">{len(lead['sources']) if len(lead['sources']) > 1 else ''}</span>
+          {f'<span class="spot-n"><b>{len(lead["sources"])}</b> {esc(t["sources"])}</span>' if len(lead['sources']) > 1 else ''}
           <h4>{esc(show(lead))}</h4>
           <span class="spot-s">{esc(lead['sources'][0]['name'])} · {esc(fmt_date(lead['date'], lang))}</span>
         </a>""")
@@ -848,8 +850,12 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
     transition:transform .2s ease, border-color .2s ease;
   }}
   .spot:hover {{ transform:translateY(-3px); border-color:color-mix(in srgb,var(--c) 50%, transparent); }}
-  .spot-n {{ position:absolute; top:14px; right:18px; font:700 22px/1 "Space Grotesk"; color:rgba(255,255,255,.09); }}
+  .spot-n {{ position:absolute; top:14px; right:14px; font:600 10.5px/1 Inter; letter-spacing:.06em;
+             padding:4px 8px; border-radius:999px; color:#e6e8ef;
+             border:1px solid color-mix(in srgb,var(--c) 45%, transparent);
+             background:color-mix(in srgb,var(--c) 14%, transparent); }}
   .spot h4 {{ font:600 15px/1.32 "Space Grotesk"; margin:0 30px 10px 0; }}
+  .spot-n + h4 {{ margin-top:22px; }}   /* leave room under the sources badge */
   .spot-s {{ font:500 11.5px/1 Inter; color:var(--faint); }}
 
   section.area {{ margin:64px 0 0; scroll-margin-top:24px; }}
@@ -866,21 +872,58 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
     max-width:62ch; font-style:italic;
   }}
   .grid {{ display:grid; gap:16px; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); }}
-  .card {{
+  /* The tile is a two-faced card: the news on the front, the summary on the back.
+     The back sits on top of the front, so a closed tile keeps the front's height;
+     when flipped, the script grows it only if the summary needs more room. */
+  .card {{ position:relative; perspective:1500px; transition:transform .22s ease; }}
+  .card:hover {{ transform:translateY(-4px); }}
+  .card-inner {{
+    position:relative; height:100%; transform-style:preserve-3d;
+    transition:transform .8s cubic-bezier(.2,.75,.2,1), min-height .6s ease;
+  }}
+  .card.flipped .card-inner {{ transform:rotateY(180deg); }}
+  .face {{
     position:relative; overflow:hidden; padding:22px 22px 17px; border-radius:15px;
     border:1px solid rgba(255,255,255,.07);
     background:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.014));
-    transition:transform .22s ease, border-color .22s ease, box-shadow .22s ease;
+    -webkit-backface-visibility:hidden; backface-visibility:hidden;
+    transition:border-color .22s ease, box-shadow .22s ease;
   }}
-  .card::before {{ content:""; position:absolute; top:0; bottom:0; left:0; width:3px; background:var(--c); }}
-  .card:hover {{
-    transform:translateY(-4px);
+  .face::before {{ content:""; position:absolute; top:0; bottom:0; left:0; width:3px; background:var(--c); }}
+  .card:hover .face {{
     border-color:color-mix(in srgb,var(--c) 45%, transparent);
     box-shadow:0 20px 42px -24px color-mix(in srgb,var(--c) 65%, transparent);
   }}
-  .card.featured {{
-    grid-column:span 2; padding:28px;
+  .card.featured {{ grid-column:span 2; }}
+  .card.featured .face {{
+    padding:28px;
     background:linear-gradient(135deg, color-mix(in srgb,var(--c) 12%, transparent), rgba(255,255,255,.014) 62%);
+  }}
+  .face.front {{ height:100%; box-sizing:border-box; cursor:pointer; }}
+  .face.front .more-srcs a {{ cursor:alias; }}
+  .face.back, .card.featured .face.back {{
+    position:absolute; inset:0; overflow:auto; box-sizing:border-box;
+    transform:rotateY(180deg); display:flex; flex-direction:column;
+    background:linear-gradient(160deg, color-mix(in srgb,var(--c) 18%, #0b0d13), #0b0d13 72%);
+  }}
+  .card .back-k {{ font:600 10.5px/1 Inter; letter-spacing:.22em; text-transform:uppercase; color:var(--c); }}
+  .card .back-t {{ font:600 17px/1.3 "Space Grotesk"; margin:10px 0 4px; letter-spacing:-.01em; }}
+  .card.featured .back-t {{ font-size:21px; }}
+  .card .back-m {{ font:500 11.5px/1 Inter; color:var(--faint); margin:0 0 14px; }}
+  .card .back-b {{ font:400 15px/1.62 "Newsreader", Georgia, serif; color:#d3d8e4; margin:0; overflow:auto; }}
+  .card .back-n {{ font:italic 400 12.5px/1.5 Inter; color:var(--faint); margin:10px 0 0; }}
+  .card .back-srcs {{ margin:12px 0 0; font:500 11.5px/1.8 Inter; color:var(--faint); }}
+  .card .back-srcs a {{ color:var(--mute); margin-right:10px; }}
+  .card .back-act {{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:auto; padding-top:16px; }}
+  .card .back-x {{ margin-left:auto; background:none; border:0; color:var(--mute); font:500 12.5px/1 Inter; cursor:pointer; }}
+  .card .back-x:hover {{ color:#fff; }}
+  .rv {{ opacity:0; transform:translateY(8px); transition:opacity .45s ease, transform .45s ease; }}
+  .card.flipped .rv {{ opacity:1; transform:none; }}
+  .card.flipped .rv.d1 {{ transition-delay:.35s; }}
+  .card.flipped .rv.d2 {{ transition-delay:.47s; }}
+  .card.flipped .rv.d3 {{ transition-delay:.59s; }}
+  @media (prefers-reduced-motion:reduce) {{
+    .card, .card-inner, .face, .rv {{ transition:none !important; }}
   }}
   .card h3 {{ font:600 18px/1.3 "Space Grotesk"; margin:0 42px 10px 0; letter-spacing:-.01em; }}
   .card.featured h3 {{ font-size:23px; }}
@@ -901,8 +944,11 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
     padding-bottom:2px;
   }}
   .more-srcs a:hover {{ filter:brightness(1.3); }}
-  .rank {{ position:absolute; top:15px; right:19px; font:700 25px/1 "Space Grotesk"; color:rgba(255,255,255,.07); }}
-  .rank.feat {{ top:20px; right:24px; font-size:34px; }}
+  .badge {{ font:600 10.5px/1 Inter; letter-spacing:.06em; padding:4px 8px; border-radius:999px;
+            color:#e6e8ef; border:1px solid color-mix(in srgb,var(--c) 45%, transparent);
+            background:color-mix(in srgb,var(--c) 14%, transparent); white-space:nowrap; }}
+  .badge b {{ color:#fff; font-weight:700; }}
+  .badge.score {{ color:var(--mute); border-color:rgba(255,255,255,.14); background:transparent; cursor:help; }}
   .thumb {{
     position:relative; margin:-22px -22px 16px; aspect-ratio:16/9; overflow:hidden;
     background:#0b0d13; border-bottom:1px solid rgba(255,255,255,.07);
@@ -944,7 +990,7 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
   .b-meta {{ flex:none; font:500 11.5px/1.4 Inter; color:var(--faint); white-space:nowrap; }}
   .b-meta em {{ font-style:normal; color:var(--c); font-weight:600; }}
   .more-note {{ font:400 13px/1 Inter; color:var(--faint); margin:20px 0 0; font-style:italic; }}
-  @media (max-width:760px) {{ .card.featured {{ grid-column:span 1; padding:22px; }} }}
+  @media (max-width:760px) {{ .card.featured {{ grid-column:span 1; }} .card.featured .face {{ padding:22px; }} }}
   dialog.pop {{
     width:min(620px,calc(100vw - 32px)); max-height:calc(100vh - 48px); padding:0; border-radius:16px;
     color:var(--fg); background:#0e1018; border:1px solid color-mix(in srgb,var(--c,#7aa2f7) 40%, transparent);
@@ -952,7 +998,7 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
   }}
   dialog.pop::backdrop {{ background:rgba(4,5,9,.72); backdrop-filter:blur(3px); }}
   dialog.pop[open] {{ animation:pop .18s ease; }}
-  @keyframes pop {{ from {{ opacity:0; transform:translateY(8px) scale(.98); }} }}
+  @keyframes pop {{ from {{ opacity:0; transform:perspective(900px) rotateX(-14deg) translateY(10px) scale(.98); }} }}
   .pop-in {{ padding:28px 28px 24px; border-top:3px solid var(--c,#7aa2f7); }}
   .pop-k {{ font:600 10.5px/1 Inter; letter-spacing:.22em; text-transform:uppercase; color:var(--c,#7aa2f7); }}
   .pop h3 {{ font:600 21px/1.3 "Space Grotesk"; margin:12px 0 4px; }}
@@ -1059,13 +1105,40 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
         $('pop-s').hidden = !s.others.length;
         d.showModal();
       }}
+      function flip(card, on) {{
+        card.classList.toggle('flipped', on);
+        var front = card.querySelector('.front'), back = card.querySelector('.back');
+        front.inert = on; back.inert = !on;      // the hidden face must not take focus
+        front.setAttribute('aria-hidden', on ? 'true' : 'false');
+        back.setAttribute('aria-hidden', on ? 'false' : 'true');
+        var inner = card.querySelector('.card-inner');   // grow only if the summary needs room
+        inner.style.minHeight = on ? Math.max(inner.offsetHeight, back.scrollHeight + 2) + 'px' : '';
+        var next = card.querySelector(on ? '.back-x' : '.go');
+        if (next) next.focus({{ preventScroll: true }});
+      }}
       document.addEventListener('click', function (e) {{
-        var b = e.target.closest('.go[data-sid], .brief[data-sid]');
+        var card = e.target.closest('.card');
+        if (card && e.target.closest('.back-x')) {{ flip(card, false); return; }}
+        if (card && e.target.closest('.front')) {{
+          // the whole tile opens the summary; the headline link keeps its href only
+          // as a no-JS fallback. Links to other sources still navigate.
+          var link = e.target.closest('a');
+          if (!link || link.closest('h3')) {{
+            if (link) e.preventDefault();
+            flip(card, true);
+            return;
+          }}
+        }}
+        var b = e.target.closest('.brief[data-sid]');
         if (b) {{
           e.preventDefault();                      // brief rows are real links: no-JS fallback
           open(b.dataset.sid, getComputedStyle(b).getPropertyValue('--c'));
         }}
         else if (e.target === d) d.close();       // click on the backdrop
+      }});
+      document.addEventListener('keydown', function (e) {{
+        if (e.key === 'Escape' && !d.open)
+          document.querySelectorAll('.card.flipped').forEach(function (c) {{ flip(c, false); }});
       }});
       $('pop-x').addEventListener('click', function () {{ d.close(); }});
     }})();
@@ -1141,9 +1214,31 @@ def card_html(c, lang, featured=False, t=None, image=True) -> str:
         rest = len(src) - 6
         more = f'<li class="more-n">+{rest}</li>' if rest > 0 else ""
         extra = f'<ul class="more-srcs">{links}{more}</ul>'
+    body = c.get("summary") or show(c, "snippet")
+    has_summary = bool(c.get("summary")) or lang != "it"
+    others = "".join(
+        f'<a href="{esc(x["link"])}" target="_blank" rel="noopener">{esc(x["name"])}</a>'
+        for x in src[1:6])
+    single = f" &middot; {esc(t['single'])}" if len(src) == 1 else ""
+    note = "" if has_summary else f'<p class="back-n rv d1">{esc(t["no_sum"])}</p>'
+    srcs = (f'<div class="back-srcs rv d2">{esc(t["other_src"])}: {others}</div>'
+            if others else "")
+    back = f"""<div class="face back" inert aria-hidden="true">
+          <div class="back-k">{esc(t['summary'])}</div>
+          <h3 class="back-t">{esc(show(c))}</h3>
+          <div class="back-m">{esc(first['name'])} &middot; {esc(fmt_date(c['date'], lang))}{single}</div>
+          <p class="back-b rv d1">{esc(body)}</p>
+          {note}
+          {srcs}
+          <div class="back-act rv d3">
+            <a class="pop-link" href="{esc(first['link'])}" target="_blank" rel="noopener">{esc(t['orig'])} &rarr;</a>
+            <button type="button" class="back-x">&larr; {esc(t['close'])}</button>
+          </div>
+        </div>"""
     return f"""
       <article class="card{' featured' if featured else ''}" style="--c:{c['color']}">
-        <div class="rank{' feat' if featured else ''}">{len(c['sources']) if len(c['sources']) > 1 else ''}</div>
+        <div class="card-inner">
+        <div class="face front">
         {thumb_html(c, lang, big=featured) if image else ''}
         {extra}
         <h3><a href="{esc(first['link'])}" target="_blank" rel="noopener" title="{esc(c['title'])}">{esc(show(c))}</a></h3>
@@ -1152,8 +1247,13 @@ def card_html(c, lang, featured=False, t=None, image=True) -> str:
           <span class="src">{esc(first['name'])}</span>
           <span>&middot;</span><span>{esc(fmt_date(c['date'], lang))}</span>
           {f'<span class="solo">{esc(t["single"])}</span>' if len(src) == 1 else ''}
+          {f'<span class="badge"><b>{len(src)}</b> {esc(t["sources"])}</span>' if len(src) > 1 else ''}
+          <span class="badge score" title="{esc(t['score_tip'])}">&#9733; {round(score(c))}</span>
           <button type="button" class="go" data-sid="{esc(c.get('sid', ''))}">{esc(t['read'])} &rarr;</button>
         </footer>
+        </div>
+        {back}
+        </div>
       </article>"""
 
 
