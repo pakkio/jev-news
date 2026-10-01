@@ -94,7 +94,7 @@ UI = {
         more="e altre", footer_note="Chiavi mai incluse in questo file.",
         legend="la composizione della settimana", no_intro="",
         stats=(("storie", "{n}"), ("eventi unici", "{c}"), ("aree", "{a}"),
-               ("equilibrio per area", "{g}"), ("finestra", "{w}")),
+               ("eventi per area (min–max)", "{g}"), ("finestra", "{w}")),
     ),
     "en": dict(
         kicker="Signal · week of", title="AI Briefing",
@@ -110,7 +110,7 @@ UI = {
         more="more", footer_note="No key material in this file.",
         legend="how the week broke down", no_intro="",
         stats=(("stories", "{n}"), ("unique events", "{c}"), ("areas", "{a}"),
-               ("spread per area", "{g}"), ("window", "{w}")),
+               ("events per area (min–max)", "{g}"), ("window", "{w}")),
     ),
 }
 
@@ -348,6 +348,9 @@ def cluster(items: list, min_sim: float) -> list:
         c["area"] = c["members"][0]["area"]
         c["color"] = c["members"][0]["color"]
         c["folded"] = [m["title"] for m in c["members"][1:]]
+        # free Google News thumbnail, kept as the fallback illustration
+        c["thumb"] = next((m["imageUrl"] for m in c["members"]
+                           if m.get("imageUrl")), "")
     clusters.sort(key=lambda c: hours(c["date"]))
     return clusters
 
@@ -865,14 +868,19 @@ def main() -> None:
 
     if images != "off":
         import images as IMG
-        shown = [c for c in clusters]
-        print("  immagini per le storie (Serper Images)...")
-        cache, ist = IMG.fetch([c["title"] for c in shown],
+        # Serper Images (1 credit each) only for the stories that get a card;
+        # the rest reuse a cached result if there is one, else the News thumbnail
+        featured = [c for _, _, rows, _, _ in split_areas(clusters, n_main, n_more)
+                    for c in rows]
+        print("  immagini per le storie in evidenza (Serper Images)...")
+        cache, ist = IMG.fetch([c["title"] for c in featured],
                                lang=lang, quiet=(lang == "en"),
                                want={c["title"]: [s["link"] for s in c["sources"]]
-                                     for c in clusters})
+                                     for c in featured})
         for c in clusters:
             row = IMG.lookup(cache, c["title"])
+            if not row and c.get("thumb"):
+                row = {"url": c["thumb"], "credit": c["sources"][0]["name"]}
             if row:
                 c["img"] = row
         print(f"  trovate {ist['found']}, dalla cache {ist['cached']}, "

@@ -125,7 +125,7 @@ def main() -> None:
                 "title": n.get("title", ""), "link": link, "url": c,
                 "snippet": n.get("snippet", ""), "source": n.get("source", ""),
                 "date": n.get("date", ""), "area": area, "color": color,
-                "q": tag,
+                "imageUrl": n.get("imageUrl", ""), "q": tag,
             })
             new += 1
         return new
