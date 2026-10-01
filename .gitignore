@@ -9,3 +9,8 @@ venv/
 ai-news*.json
 ai-news*.html
 ai-news*.md
+
+# rassegna LGBT+ generata
+provs/lgbt-news*.json
+provs/lgbt-news*.html
+provs/lgbt-news*.md

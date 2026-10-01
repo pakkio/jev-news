@@ -16,10 +16,22 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_MODEL = "openrouter/free"
+DEFAULT_MODEL = os.environ.get("LLM_MODEL", "openrouter/free")
 API = "https://openrouter.ai/api/v1/chat/completions"
+# "<provider>:<model>" selects another OpenAI-compatible endpoint; no prefix = OpenRouter
+PROVIDERS = {"opencodego": ("https://opencode.ai/zen/go/v1/chat/completions",
+                            "OPENCODEGO_API_KEY")}
+
+
+def provider(model: str) -> tuple:
+    """-> (url, key variable, model id as the endpoint knows it)."""
+    name, _, rest = model.partition(":")
+    if rest and name in PROVIDERS:
+        return (*PROVIDERS[name], rest)
+    return API, "OPENROUTER_API_KEY", model
 
 PROMPT = """\
 Traduci in italiano naturale e giornalistico, senza parafrasi.
@@ -38,17 +50,21 @@ Frammenti da tradurre:
 %s"""
 
 
-def load_key() -> str:
-    key = os.environ.get("OPENROUTER_API_KEY", "")
+def load_key(model: str = DEFAULT_MODEL) -> str:
+    var = provider(model)[1]
+    key = os.environ.get(var, "")
     if key:
         return key
     path = os.path.join(HERE, "..", ".env")
     if os.path.exists(path):
         for line in open(path):
             line = line.strip()
-            if line.startswith("OPENROUTER_API_KEY="):
+            if line.startswith(f"{var}="):
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
-    raise SystemExit("Error: OPENROUTER_API_KEY not set (and no ../.env).")
+    raise SystemExit(f"Error: {var} not set (and no ../.env).")
+
+
+SESSION = str(uuid.uuid4())
 
 
 def digest(title: str, snippet: str) -> str:
@@ -72,18 +88,21 @@ def save_cache(path: str, cache: dict) -> None:
 
 
 def call(key: str, model: str, payload: str, retries: int = 3) -> dict:
-    body = {"model": model, "temperature": 0,
+    url, _, model_id = provider(model)
+    body = {"model": model_id, "temperature": 0,
             "messages": [{"role": "user", "content": payload}]}
     req = urllib.request.Request(
-        API, data=json.dumps(body).encode(),
+        url, data=json.dumps(body).encode(),
         headers={"Authorization": f"Bearer {key}",
                  "Content-Type": "application/json",
+                 # OpenCode's edge rejects the default Python UA and wants a session id
+                 "User-Agent": "curl/8.5.0", "x-opencode-session": SESSION,
                  "HTTP-Referer": "https://github.com/pakkio/search",
                  "X-Title": "AI Briefing"})
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(req, timeout=90) as r:
-                return json.loads(r.read())["choices"][0]["message"]["content"]
+                return json.loads(r.read())["choices"][0]["message"]["content"] or ""
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503) and attempt < retries - 1:
                 time.sleep(2 ** (attempt + 1))
@@ -115,7 +134,7 @@ def extract_json(text: str) -> dict:
 def translate(pairs: list, model: str = DEFAULT_MODEL, batch: int = 10,
               cache_path: str = None, quiet: bool = False) -> tuple:
     """pairs: [{"title":..., "snippet":...}] -> (cache dict, stats dict)."""
-    key = load_key()
+    key = load_key(model)
     cache_path = cache_path or os.path.join(HERE, "ai-news.it.json")
     cache = load_cache(cache_path)
     todo = []

@@ -12,9 +12,14 @@ import json
 import os
 import re
 import sys
+import html
+import urllib.request
 
 import main as M
 import translate as TR
+
+# A fast model gives up on pages that are mostly menu; one try on a stronger one.
+STRONG = os.environ.get("LLM_MODEL_STRONG", "opencodego:deepseek-v4-pro")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MIN_CHARS = 600          # below this the page is a paywall stub or a cookie wall
@@ -47,15 +52,29 @@ def body_only(text: str) -> str:
     return "\n".join(l for l in lines[start:] if l)
 
 
+def direct_read(link: str) -> str:
+    """Plain GET with a browser UA, tags stripped: for sites Jina cannot reach."""
+    req = urllib.request.Request(link, headers={
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                      "Chrome/124 Safari/537.36",
+        "Accept-Language": "en,it;q=0.8"})
+    try:
+        page = urllib.request.urlopen(req, timeout=20).read().decode(errors="replace")
+    except Exception:  # noqa: BLE001
+        return ""
+    page = re.sub(r"(?s)<(script|style|nav|header|footer)[^>]*>.*?</\1>", " ", page)
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", page))).strip()
+
+
 def article_text(links: list, log=print) -> str:
     for link in links[:3]:
         ok, text = M.jina_read(link)
-        if not ok:
-            log(f"      jina KO  {link[:70]} -> {text[:60]}")
-            continue
-        text = body_only(M.clean_content(text))
-        log(f"      jina {'ok' if len(text) >= MIN_CHARS else 'corto'} "
+        text = body_only(M.clean_content(text)) if ok else ""
+        log(f"      jina {'ok' if len(text) >= MIN_CHARS else ('KO' if not ok else 'corto')} "
             f"{len(text)} car  {link[:70]}")
+        if len(text) < MIN_CHARS:
+            text = direct_read(link)
+            log(f"      diretto {'ok' if len(text) >= MIN_CHARS else 'KO'} {len(text)} car")
         if len(text) >= MIN_CHARS:
             return text[:MAX_CHARS]
     return ""
@@ -71,7 +90,13 @@ def ask(key: str, model: str, title: str, text: str, quiet: bool,
         except Exception as e:  # noqa: BLE001
             print(f"      ! errore: {str(e)[:100]}", file=sys.stderr)
             continue
-        if out.upper().startswith("NONE") or len(out) >= 80:
+        if out.upper().startswith("NONE"):
+            if t < 1:                         # one retry: models sometimes say NONE to a good page
+                if not quiet:
+                    print(f"      NONE, riprovo {t + 1}/{tries}")
+                continue
+            return out
+        if len(out) >= 80:
             return out
         if not quiet:
             print(f"      risposta scartata ({out[:30]!r}), riprovo {t + 1}/{tries}")
@@ -81,7 +106,7 @@ def ask(key: str, model: str, title: str, text: str, quiet: bool,
 def summarize(stories: list, model: str = TR.DEFAULT_MODEL,
               cache_path: str = None, quiet: bool = False) -> tuple:
     """stories: [{"title":..., "links":[...]}] -> (cache, stats)."""
-    key = TR.load_key()
+    key = TR.load_key(model)
     cache_path = cache_path or os.path.join(HERE, "ai-news.sum.json")
     cache = TR.load_cache(cache_path)
     todo = [s for s in stories if digest(s["title"]) not in cache]
@@ -96,6 +121,10 @@ def summarize(stories: list, model: str = TR.DEFAULT_MODEL,
             out = ask(key, model, s["title"], text, quiet)
             if out is None:
                 continue                       # not cached: retried next run
+            if out.upper().startswith("NONE") and model != STRONG:
+                if not quiet:
+                    print(f"      NONE, provo {STRONG}")
+                out = ask(key, STRONG, s["title"], text, quiet, tries=2) or out
             summary = "" if out.upper().startswith("NONE") else out
         if summary or not text:                # model NONE is retried next run
             cache[d] = summary
