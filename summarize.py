@@ -50,6 +50,8 @@ Stile giornalistico e neutro. Regole:
 - traduci in italiano corrente ogni nome comune e istituzione nota (ospedale,
   Consiglio d'Europa, Unione europea, Corte Suprema); lascia in inglese solo i nomi
   propri di persone, aziende e prodotti e le sigle;
+- se una sigla poco nota non e' spiegata nel testo, sostituiscila con una descrizione
+  generica fedele al testo oppure omettila; non inventare il suo significato;
 - chiudi sempre le frasi: niente testo troncato;
 - se il testo non e' un articolo (paywall, errore, cookie), rispondi esattamente: NONE
 Rispondi solo con il riassunto, senza titoli ne' elenchi.
@@ -77,6 +79,11 @@ RIASSUNTO:
 TESTO:
 %s"""
 
+# Institutions and titles that must read in Italian; the check runs on every summary
+# written and on ones verified before a term was added to this list.
+RESIDUE = re.compile(
+    r"\b(speaker of|civil code|supreme court|council of europe|european union|"
+    r"ed\. ?dept|dept\.|department of|bombshell)\b", re.I)
 ENGLISH = re.compile(r"\b(the|and|with|from|that|this|which|their|have|were|will|hospital)\b",
                      re.I)
 DANGLING = re.compile(r"\b(sia|che|di|e|la|il|lo|le|con|ma|per|da|in|un|una|del|della|"
@@ -105,6 +112,9 @@ def lint(summary: str) -> list:
         out.append("ultima frase troncata")
     if len(ENGLISH.findall(s)) >= 2:
         out.append("parole inglesi non tradotte")
+    found = RESIDUE.search(s)
+    if found:
+        out.append(f"termine inglese da tradurre: {found.group(0)!r}")
     return out
 
 
@@ -230,7 +240,7 @@ def summarize(stories: list, model: str = TR.DEFAULT_MODEL,
     for s in stories:
         d = digest(s["title"])
         have = cache.get(d)
-        if have is None or (verify and have and ver.get(d) != vkey(have)):
+        if have is None or (verify and have and (ver.get(d) != vkey(have) or lint(have))):
             todo.append(s)
     stats = {"cached": len(stories) - len(todo), "done": 0, "empty": 0,
              "checked": 0, "rejected": 0}

@@ -253,9 +253,70 @@ def hero_html(hero: str, lang: str) -> str:
     </figure>"""
 
 
+CRUMB = re.compile(r"((?:\s+/\s+[^/|]{1,40}){1,})$")
+SUFFIX = re.compile(r"\s+[|»\-–—:]\s+([^|»\-–—:]{2,40})$")
+
+
+def clean_title(title: str, source: str = "") -> str:
+    """Strips what a site adds to a headline: a breadcrumb ("/ Comunicati / Novita'
+    / Homepage") or its own name ("... - Reuters"). A trailing "| Opinion" or a
+    "Nvidia / AMD" inside the sentence are content and stay."""
+    t = title
+    m = CRUMB.search(t)
+    if m:
+        segs = [x for x in m.group(1).split("/") if x.strip()]
+        if len(segs) >= 2 or segs[-1].strip().lower() in ("homepage", "home"):
+            t = t[:m.start()]
+    m = SUFFIX.search(t)
+    if m and source:
+        tail, src = m.group(1).strip().lower(), source.lower()
+        if tail in src or src in tail:
+            t = t[:m.start()]
+    return t.strip() or title
+
+
 def show(c: dict, field: str = "title") -> str:
-    """Translated text when available, English otherwise."""
-    return c.get(f"{field}_it") or c[field]
+    """Translated text when available, English otherwise; headlines are cleaned
+    of site furniture."""
+    text = c.get(f"{field}_it") or c[field]
+    if field == "title" and c.get("sources"):
+        return clean_title(text, c["sources"][0]["name"])
+    return text
+
+
+# ----------------------------------------------------------- filler items ----
+DATE_TITLE = re.compile(
+    r"^(?:it'?s |it is |today is |oggi [eè] )?"
+    r"(?:(?:mon|tues|wednes|thurs|fri|satur|sun)day|luned[iì]|marted[iì]|mercoled[iì]|"
+    r"gioved[iì]|venerd[iì]|sabato|domenica)?[, ]*\w+ \d{1,2},? \d{4}\.?$", re.I)
+CATALOG = ("reutersconnect.com", "gettyimages", "alamy.com", "shutterstock",
+           "apimages.com", "istockphoto")
+
+
+def drop_filler(items: list) -> tuple:
+    """Removes entries that are not news and returns (kept, [(reason, title)]).
+
+    Three kinds so far: photo-catalogue listings (Reuters Connect "Licensable
+    picture: ..."), a headline that is only a date (a show's page whose real
+    title is missing; rewriting it from the snippet just yields the show's
+    intro), and a headline of three words or fewer over a snippet with hashtags,
+    which is a social post and not an article."""
+    kept, dropped = [], []
+    for it in items:
+        title, snip = it["title"].strip(), (it.get("snippet") or "").strip()
+        link = it.get("link", "").lower()
+        if any(d in link for d in CATALOG) or re.match(
+                r"^(licensable (picture|photo)|stock photo)", title, re.I):
+            dropped.append(("catalogo fotografico", title))
+            continue
+        if DATE_TITLE.match(title):
+            dropped.append(("il titolo e' solo una data", title))
+            continue
+        if re.search(r"#\w+", snip) and len(title.split()) <= 3:
+            dropped.append(("post social: titolo breve e hashtag", title))
+            continue
+        kept.append(it)
+    return kept, dropped
 
 
 def fmt_date(d: str, lang: str) -> str:
@@ -415,14 +476,21 @@ def cluster(items: list, min_sim: float) -> list:
 
 def finalize(c: dict) -> None:
     """Derived fields of a cluster; re-run after members are added to it."""
+    # headline, snippet, link and outlet must come from ONE article: the member
+    # whose title the card carries. The rest follow, freshest first.
+    rep = next((m for m in c["members"] if m["title"] == c["title"]), c["members"][0])
+    order = [rep] + sorted((m for m in c["members"] if m is not rep),
+                           key=lambda m: hours(m["date"]))
     seen, sources = set(), []
-    for m in sorted(c["members"], key=lambda m: hours(m["date"])):
+    for m in order:
         key = (m["source"] or "").lower() or m["link"]
         if key in seen:
             continue
         seen.add(key)
         sources.append({"name": m["source"] or "fonte", "link": m["link"]})
     c["sources"] = sources
+    if (rep.get("snippet") or "").strip():
+        c["snippet"] = rep["snippet"]
     c["area"] = c["members"][0]["area"]
     c["color"] = c["members"][0]["color"]
     c["folded"] = [m["title"] for m in c["members"][1:]]
@@ -727,8 +795,7 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
         {thread_html}
         <h3 class="sub-label">{esc(t['main_label'])}</h3>
         <div class="grid">{"".join(cards)}</div>
-        <h3 class="sub-label">{esc(t['sub_label'])}</h3>
-        <div class="briefer">{briefs}</div>
+        {f'<h3 class="sub-label">{esc(t["sub_label"])}</h3><div class="briefer">{briefs}</div>' if brief_rows else ''}
         {more}
       </section>""")
 
@@ -1392,6 +1459,9 @@ def main() -> None:
 
     path = path or os.path.join(HERE, "ai-news.json")
     raw = json.load(open(path))
+    raw, dropped = drop_filler(raw)
+    for why, title in dropped:
+        print(f"  scartata ({why}): {title[:70]}")
     for it in raw:
         it["area"], it["color"] = classify(it["title"], it.get("snippet", ""))
     raw.sort(key=lambda x: hours(x["date"]))

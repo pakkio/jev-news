@@ -12,6 +12,7 @@ run is free and only genuinely new stories cost anything.
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -40,6 +41,14 @@ Risponci ESCLUSIVAMENTE con un oggetto JSON, senza testo attorno.
 Regole:
 - lascia in inglese i nomi propri: aziende, prodotti, persone, luoghi, sigle
   (es. OpenAI, DeepSeek, Hugging Face, Nvidia, Wall Street, UE);
+- traduci per il senso, mai con calchi letterali: "bombshell lawsuit" = "causa
+  clamorosa", "tees up" = "prepara", "caves to" = "cede a";
+- istituzioni e cariche con il nome italiano: Supreme Court = Corte Suprema,
+  Department of Education / Ed. Dept. = Dipartimento dell'Istruzione, Civil Code =
+  Codice civile, speaker of parliament = presidente del parlamento, hospital =
+  ospedale, Council of Europe = Consiglio d'Europa;
+- non lasciare abbreviazioni inglesi ("Dept.", "Gov.", "Sen."): scrivile per esteso
+  in italiano;
 - non aggiungere e non togliere informazione;
 - se una stringa contiene gia' dell'italiano, copiala identica;
 - se una stringa e' vuota, restituisci stringa vuota.
@@ -48,6 +57,16 @@ Formato: {"<id>": {"t": "<titolo>", "s": "<snippet>"}}
 
 Frammenti da tradurre:
 %s"""
+
+
+# English left in a translation: such entries are redone instead of trusted.
+RESIDUE = re.compile(
+    r"\b(ed\. ?dept|dept\.|gov\.|speaker of|civil code|supreme court|council of europe|"
+    r"european union|bombshell|causa bomba)\b", re.I)
+
+
+def bad(row: dict) -> bool:
+    return bool(RESIDUE.search(f"{row.get('t', '')} {row.get('s', '')}"))
 
 
 def load_key(model: str = DEFAULT_MODEL) -> str:
@@ -140,7 +159,7 @@ def translate(pairs: list, model: str = DEFAULT_MODEL, batch: int = 10,
     todo = []
     for p in pairs:
         d = digest(p["title"], p.get("snippet", ""))
-        if d not in cache:
+        if d not in cache or bad(cache[d]):
             todo.append((d, p))
     stats = {"cached": len(pairs) - len(todo), "translated": 0, "failed": 0}
 

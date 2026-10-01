@@ -153,6 +153,9 @@ def main() -> None:
         raw = collect(max_credits)
     if not raw:
         raise SystemExit("Nessuna storia raccolta.")
+    raw, dropped = FN.drop_filler(raw)
+    for why, title in dropped:
+        print(f"  scartata ({why}): {title[:70]}")
     for it in raw:
         it["area"], it["color"] = FN.classify(it["title"], it["snippet"])
     raw.sort(key=lambda x: FN.hours(x["date"]))
