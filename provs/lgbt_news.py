@@ -142,6 +142,8 @@ def main() -> None:
 
     # stesso motore, altro tema
     FN.AREAS[:] = AREAS
+    FN.MIN_SHARED_IDF = 7.0      # two shared words must carry real information
+    FN.MERGE_SWEEP = True        # rejoin clusters that converged after the greedy pass
     FN.UI[lang].update(TEXT_IT)
 
     if "--reuse" in argv and os.path.exists(f"{OUT}.json"):
@@ -157,12 +159,15 @@ def main() -> None:
     json.dump(raw, open(f"{OUT}.json", "w"), indent=1, ensure_ascii=False)
 
     clusters = FN.cluster(raw, 0.62)
+    print(f"  cluster per parole: {len(clusters)}")
+    merged = FN.llm_merge(clusters, cache_path=f"{OUT}.mrg.json")
+    print(f"  unite per parafrasi: {merged} -> {len(clusters)} eventi")
     for n, c in enumerate(clusters):
         c["sid"] = f"s{n}"
-    rows = [(c, kind) for _, _, main_rows, more, _ in
-            FN.split_areas(clusters, n_main, n_more)
-            for c, kind in [(x, "main") for x in main_rows] + [(x, "more") for x in more]]
     threads = FN.find_threads(clusters)
+    rows = [(c, kind) for _, _, main_rows, more, _ in
+            FN.split_areas(clusters, n_main, n_more, skip_threaded=True)
+            for c, kind in [(x, "main") for x in main_rows] + [(x, "more") for x in more]]
     shown = [c for c, _ in rows]
     shown += [c for th in threads for c in th["members"] if c not in shown]
     featured = [c for c, k in rows if k == "main"]
@@ -176,6 +181,8 @@ def main() -> None:
                                     for c in featured})
         for c in clusters:
             row = IMG.lookup(cache, c["title"])
+            if row and not IMG.same_publisher(row, [s["link"] for s in c["sources"]]):
+                row = {}                     # lookalike from another site: not trusted
             if not row and c.get("thumb"):
                 row = {"url": c["thumb"], "credit": c["sources"][0]["name"]}
             if row:
@@ -200,7 +207,8 @@ def main() -> None:
              for c in shown], cache_path=f"{OUT}.sum.json")
         for c in shown:
             c["summary"] = SM.lookup(cache, c["title"])
-        print(f"  nuovi {st['done']}, cache {st['cached']}, non disponibili {st['empty']}")
+        print(f"  nuovi {st['done']}, cache {st['cached']}, non disponibili {st['empty']}, "
+              f"controllati {st['checked']}, scartati {st['rejected']}")
 
     FN.label_threads(threads, cache_path=f"{OUT}.thr.json")
     print(f"  fili: {[(th['area'], len(th['members']), th.get('title')) for th in threads]}")

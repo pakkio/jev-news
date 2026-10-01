@@ -141,6 +141,18 @@ def pick(results: list, title: str, want: list) -> dict:
     return {}
 
 
+def same_publisher(row: dict, links: list) -> bool:
+    """Is this image hosted by a publisher that actually carries the story?
+
+    The image search runs on the headline, so a hit from a different site is a
+    lookalike: an illustration that matches the words, not the event. It once
+    put a Pride banner on a human-trafficking trial. Only a photo from one of
+    the story's own sources is trusted; otherwise the card uses the News
+    thumbnail (which belongs to the article) or no picture."""
+    page = (row or {}).get("page")
+    return bool(page) and registrable(page) in {registrable(u) for u in links if u}
+
+
 MAGIC = (b"\xff\xd8\xff", b"\x89PNG", b"GIF8", b"BM", b"RIFF", b"II*\x00", b"MM\x00*")
 
 

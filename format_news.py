@@ -11,6 +11,7 @@ Usage:
 
 import html
 import json
+import math
 import os
 import re
 import sys
@@ -97,12 +98,18 @@ UI = {
         more="e altre", footer_note="Chiavi mai incluse in questo file.",
         legend="la composizione della settimana", no_intro="",
         thread_k="Storia in evoluzione", thread_n="episodi", thread_generic="Episodi collegati",
+        thread_tema="Tema ricorrente", thread_n_tema="storie", single="fonte unica",
+        weights_h="Come si calcola l'ordine", weights_note=(
+            "Punteggio = freschezza (fino a 30 punti, in calo nell'arco di circa 5 giorni) "
+            "+ 5 punti per ogni fonte (fino a 5) + fino a 6 punti per uno snippet informativo "
+            "+ bonus per le parole qui sotto, cercate nel titolo e nello snippet in inglese. "
+            "Sono pesi scelti da noi e uguali per ogni tema, non tarati su questo."),
         method_h="Fonti e metodo",
         method=("Gli articoli arrivano da Google News (tramite Serper) negli ultimi 7 giorni, "
                 "con ricerche per area. Le notizie sullo stesso evento sono unite in una scheda "
                 "per somiglianza dei titoli; gli episodi collegati formano una storia in evoluzione.",
-                "L'ordine non è un giudizio editoriale: dipende da freschezza, numero di fonti "
-                "e parole del titolo.",
+                "L'ordine nasce da una formula con pesi scelti da noi (dettagli sotto): non è "
+                "una misura neutra ma un giudizio editoriale scritto in codice.",
                 "Le {outlets} testate sono quelle che Google News restituisce: agenzie, quotidiani, "
                 "siti specializzati, comunicati istituzionali, blog e commenti di parte. "
                 "Comparire qui non significa che ne condividiamo la linea.",
@@ -128,12 +135,18 @@ UI = {
         more="more", footer_note="No key material in this file.",
         legend="how the week broke down", no_intro="",
         thread_k="Developing story", thread_n="episodes", thread_generic="Related episodes",
+        thread_tema="Recurring theme", thread_n_tema="stories", single="single source",
+        weights_h="How the order is computed", weights_note=(
+            "Score = freshness (up to 30 points, decaying over about 5 days) + 5 points per "
+            "source (up to 5) + up to 6 points for an informative snippet + a bonus for the "
+            "words below, matched in the headline and snippet. The weights are our choice and "
+            "the same for every topic, not tuned to this one."),
         method_h="Sources & method",
         method=("Articles come from Google News (via Serper) over the last 7 days, searched "
                 "per area. Reports of the same event are merged into one card by headline "
                 "similarity; linked episodes form a developing story.",
-                "Order is not an editorial judgement: it depends on freshness, number of "
-                "sources and headline wording.",
+                "The order comes from a formula with weights we chose (details below): it is "
+                "not a neutral measure but an editorial judgement written as code.",
                 "The {outlets} outlets are whatever Google News returns: wires, dailies, trade "
                 "sites, official releases, blogs and partisan commentary. Appearing here does "
                 "not mean we endorse a line.",
@@ -262,15 +275,21 @@ def by_rank(rows: list) -> list:
     return sorted(rows, key=score, reverse=True)
 
 
-def split_areas(clusters: list, n_main: int, n_more: int) -> list:
+def split_areas(clusters: list, n_main: int, n_more: int,
+                skip_threaded: bool = False) -> list:
     """Per area: (area, lead, main, secondary, hidden) with a display cap.
 
     The cap keeps every section the same visual size even when one area has
     twice the coverage of another; the badge still reports the true total.
+    With skip_threaded, stories already shown inside an evolving-story block
+    are left out of the lists, so nothing appears twice (unless that would
+    leave the area empty).
     """
     out = []
     for a in AREAS:
         rows = by_rank([c for c in clusters if c["area"] == a["key"]])
+        if skip_threaded:
+            rows = [c for c in rows if c.get("thread") is None] or rows
         if not rows:
             continue
         out.append((a, rows[0], rows[:n_main], rows[n_main:n_main + n_more],
@@ -336,6 +355,7 @@ def cluster(items: list, min_sim: float) -> list:
         for t in tokens(it["title"]):
             df[t] = df.get(t, 0) + 1
     hard_thr = max(2, int(0.03 * len(items)))
+    idf = {t: math.log(len(items) / n) for t, n in df.items()}
     ents = entity_terms(items)
 
     def prep(it):
@@ -349,7 +369,7 @@ def cluster(items: list, min_sim: float) -> list:
         best, best_score = None, 0.0
         for c in clusters:
             for m in c["members"]:
-                s = affinity(tk, m["_tk"], anchor, m["_anchor"])
+                s = affinity(tk, m["_tk"], anchor, m["_anchor"], idf)
                 if s > best_score:
                     best, best_score = c, s
         if best is not None and best_score >= min_sim:
@@ -366,23 +386,122 @@ def cluster(items: list, min_sim: float) -> list:
                              "snippet": it["snippet"], "date": it["date"],
                              "tokens": set(tk), "anchor": set(anchor),
                              "members": [it]})
+    # the greedy pass cannot rejoin two clusters that became similar only after
+    # later members arrived; one sweep over cluster pairs does (best member pair)
+    i = 0 if MERGE_SWEEP else len(clusters)
+    while i < len(clusters):
+        j = i + 1
+        while j < len(clusters):
+            best = max((affinity(x["_tk"], y["_tk"], x["_anchor"], y["_anchor"], idf)
+                        for x in clusters[i]["members"] for y in clusters[j]["members"]),
+                       default=0.0)
+            if best >= min_sim:
+                clusters[i]["members"] += clusters[j].pop("members")
+                clusters[i]["snippet"] = max(clusters[i]["snippet"], clusters[j]["snippet"], key=len)
+                if hours(clusters[j]["date"]) < hours(clusters[i]["date"]):
+                    clusters[i]["date"] = clusters[j]["date"]
+                del clusters[j]
+                j = i + 1                      # members changed: compare again
+            else:
+                j += 1
+        i += 1
     for c in clusters:
-        seen, sources = set(), []
-        for m in sorted(c["members"], key=lambda m: hours(m["date"])):
-            key = (m["source"] or "").lower() or m["link"]
-            if key in seen:
-                continue
-            seen.add(key)
-            sources.append({"name": m["source"] or "fonte", "link": m["link"]})
-        c["sources"] = sources
-        c["area"] = c["members"][0]["area"]
-        c["color"] = c["members"][0]["color"]
-        c["folded"] = [m["title"] for m in c["members"][1:]]
-        # free Google News thumbnail, kept as the fallback illustration
-        c["thumb"] = next((m["imageUrl"] for m in c["members"]
-                           if m.get("imageUrl")), "")
+        finalize(c)
     clusters.sort(key=lambda c: hours(c["date"]))
     return clusters
+
+
+def finalize(c: dict) -> None:
+    """Derived fields of a cluster; re-run after members are added to it."""
+    seen, sources = set(), []
+    for m in sorted(c["members"], key=lambda m: hours(m["date"])):
+        key = (m["source"] or "").lower() or m["link"]
+        if key in seen:
+            continue
+        seen.add(key)
+        sources.append({"name": m["source"] or "fonte", "link": m["link"]})
+    c["sources"] = sources
+    c["area"] = c["members"][0]["area"]
+    c["color"] = c["members"][0]["color"]
+    c["folded"] = [m["title"] for m in c["members"][1:]]
+    # free Google News thumbnail, kept as the fallback illustration
+    c["thumb"] = next((m["imageUrl"] for m in c["members"]
+                       if m.get("imageUrl")), "")
+
+
+MERGE_PROMPT = """\
+Sono titoli di giornale della stessa settimana, numerati, con data e inizio del testo.
+Raggruppa SOLO quelli che riportano lo stesso identico fatto specifico: lo stesso
+episodio, la stessa causa legale, la stessa udienza, la stessa manifestazione.
+NON raggruppare articoli sullo stesso tema, ne' fatti diversi avvenuti nello stesso
+luogo o in giorni diversi.
+Rispondi ESCLUSIVAMENTE con JSON: {"gruppi": [[1, 5], [3, 9, 12]]}
+(solo gruppi con almeno 2 numeri; {"gruppi": []} se non ce ne sono).
+
+Titoli:
+%s"""
+
+
+def llm_merge(clusters: list, model: str = None, cache_path: str = None,
+              quiet: bool = False) -> int:
+    """Second clustering pass for what word overlap cannot see: the same episode
+    told with different words ("openly gay JPMorgan employee ..." vs "his
+    homophobic boss gave him panic attacks ..."). Done per area, over headline,
+    date and the start of the snippet, cached by the exact list of titles.
+
+    Conservative on purpose: groups are capped at six, each cluster joins at
+    most one group, and every merge is printed so it can be reviewed. Returns
+    the number of clusters absorbed; `clusters` is modified in place."""
+    import hashlib
+    import translate as TR
+    model = model or TR.DEFAULT_MODEL     # the "pro" model is too slow for this: minutes per area
+    cache_path = cache_path or os.path.join(HERE, "ai-news.mrg.json")
+    cache = TR.load_cache(cache_path)
+    key, absorbed = None, 0
+    for a in AREAS:
+        rows = [c for c in clusters if c["area"] == a["key"]]
+        if len(rows) < 2:
+            continue
+        lines = [f"{i}. {c['title']} ({c['date']}) - {c['snippet'][:110]}"
+                 for i, c in enumerate(rows, 1)]
+        d = hashlib.sha1("\n".join(c["title"] for c in rows).encode()).hexdigest()[:16]
+        groups = cache.get(d)
+        if groups is None:
+            key = key or TR.load_key(model)
+            for _ in range(3):
+                try:
+                    got = TR.extract_json(TR.call(key, model, MERGE_PROMPT % "\n".join(lines)))
+                except Exception:  # noqa: BLE001
+                    continue
+                if isinstance(got.get("gruppi"), list):
+                    groups = got["gruppi"]
+                    cache[d] = groups
+                    TR.save_cache(cache_path, cache)
+                    break
+        used = set()
+        for g in groups or []:
+            idx = [i - 1 for i in g if isinstance(i, int) and 1 <= i <= len(rows)]
+            idx = [i for i in dict.fromkeys(idx) if i not in used]
+            if not 2 <= len(idx) <= 6:
+                continue
+            used.update(idx)
+            base = max((rows[i] for i in idx), key=lambda c: len(c["members"]))
+            for i in idx:
+                c = rows[i]
+                if c is base:
+                    continue
+                base["members"] += c["members"]
+                if len(c["snippet"]) > len(base["snippet"]):
+                    base["snippet"] = c["snippet"]
+                if hours(c["date"]) < hours(base["date"]):
+                    base["date"] = c["date"]
+                clusters.remove(c)
+                absorbed += 1
+                if not quiet:
+                    print(f"  unisco: {c['title'][:58]!r} -> {base['title'][:58]!r}")
+            finalize(base)
+    clusters.sort(key=lambda c: hours(c["date"]))
+    return absorbed
 
 
 IT_STOP = set("""della dello delle degli dopo come anche sono nella nelle nello negli alla
@@ -406,9 +525,11 @@ def find_threads(clusters: list, min_size: int = 3) -> list:
     a lone topic word never links anything; two stems were tried and chained
     unrelated stories together.
 
-    Returns [{"members": [cluster, ...], "area": key}], newest member first;
+    Returns [{"members": [cluster, ...], "area": key, "kind": "storia"|"tema"}],
+    newest member first;
     every member also gets c["thread"] = index.
     """
+    ents = {stem(e) for e in entity_terms([{"title": c["title"]} for c in clusters])}
     stems = []
     for c in clusters:
         stems.append({stem(t) for t in tokens(c["title"]) if t not in IT_STOP})
@@ -435,14 +556,19 @@ def find_threads(clusters: list, min_size: int = 3) -> list:
 
     groups: dict = {}
     for i in range(len(clusters)):
-        groups.setdefault(root(i), []).append(clusters[i])
+        groups.setdefault(root(i), []).append(i)
     threads = []
-    for members in groups.values():
-        if len(members) < min_size:
+    for idx in groups.values():
+        if len(idx) < min_size:
             continue
-        members.sort(key=lambda c: hours(c["date"]))
+        members = sorted((clusters[i] for i in idx), key=lambda c: hours(c["date"]))
         area = Counter(c["area"] for c in members).most_common(1)[0][0]
-        threads.append({"members": members, "area": area})
+        # "storia" when most episodes share one place or name, "tema" when they
+        # only share a subject across different places (three states, three
+        # referendums on the same topic are a theme, not one story)
+        seen = Counter(t for i in idx for t in rare[i] if t in ents)
+        kind = "storia" if seen and max(seen.values()) >= 0.6 * len(idx) else "tema"
+        threads.append({"members": members, "area": area, "kind": kind})
     threads.sort(key=lambda t: -len(t["members"]))
     for n, t in enumerate(threads):
         for c in t["members"]:
@@ -490,7 +616,11 @@ def label_threads(threads: list, model: str = None, cache_path: str = None) -> N
             t["title"], t["summary"] = row["t"], row["s"]
 
 
-def affinity(a: set, b: set, a_anchor: set, b_anchor: set) -> float:
+MIN_SHARED_IDF = 0.0   # set by callers that want it: see affinity()
+MERGE_SWEEP = False    # same for the cluster re-merge sweep: see cluster()
+
+
+def affinity(a: set, b: set, a_anchor: set, b_anchor: set, idf: dict = None) -> float:
     """Same-event score for two headlines.
 
     Containment normally, but a headline reduced to one or two meaningful words
@@ -510,6 +640,11 @@ def affinity(a: set, b: set, a_anchor: set, b_anchor: set) -> float:
     shared = a_anchor & b_anchor
     if len(shared) >= 2 and contain >= 0.3:
         return max(contain, 0.85)      # two rare entities is conclusive
+    if idf and MIN_SHARED_IDF and sum(idf.get(t, 0.0) for t in a & b) < MIN_SHARED_IDF:
+        # short headlines sharing only common words ("Boise Pride Parade" vs
+        # "Annapolis Pride Parade ...") score high on containment: require the
+        # shared words to carry real information (IDF mass), not just count
+        return 0.0
     return contain
 
 
@@ -563,7 +698,8 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
     )
 
     sections, spotlight = [], []
-    for a, lead, main_rows, brief_rows, hidden in split_areas(clusters, n_main, n_more):
+    for a, lead, main_rows, brief_rows, hidden in split_areas(
+            clusters, n_main, n_more, skip_threaded=bool(threads)):
         spotlight.append(f"""
         <a class="spot" href="{esc(lead['sources'][0]['link'])}" target="_blank" rel="noopener" style="--c:{a['color']}">
           <span class="spot-n">{len(lead['sources']) if len(lead['sources']) > 1 else ''}</span>
@@ -595,20 +731,23 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
       </section>""")
 
     payload = {}
-    shown_rows = [c for _, _, m, b, _ in split_areas(clusters, n_main, n_more)
+    shown_rows = [c for _, _, m, b, _ in split_areas(
+        clusters, n_main, n_more, skip_threaded=bool(threads))
                   for c in m + b]
     shown_rows += [c for th in threads for c in th["members"]]
     for c in shown_rows:
         first = c["sources"][0]
         payload[c["sid"]] = dict(
             title=show(c),
-            meta=f"{first['name']} · {fmt_date(c['date'], lang)}",
+            meta=f"{first['name']} · {fmt_date(c['date'], lang)}"
+                 + (f" · {t['single']}" if len(c["sources"]) == 1 else ""),
             text=c.get("summary") or show(c, "snippet"),
             ok=bool(c.get("summary")) or lang != "it", link=first["link"],
             others=[[x["name"], x["link"]] for x in c["sources"][1:6]])
     outlets = len({x["name"] for c in clusters for x in c["sources"]})
     method_html = "".join(f"<li>{esc(m.format(outlets=outlets))}</li>"
                           for m in t["method"])
+    weights_html = weights_block(t)
     stories_json = json.dumps(payload).replace("</", "<\\/")
 
     intro_html = (
@@ -839,6 +978,13 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
   .thread-t {{ font:600 21px/1.3 "Space Grotesk"; margin:12px 0 6px; }}
   .thread-s {{ font:400 16px/1.6 "Newsreader", Georgia, serif; color:#c3c9d8; margin:0 0 14px; max-width:70ch; }}
   .thread .briefer {{ grid-template-columns:1fr; }}
+  .solo {{ font:600 9.5px/1 Inter; letter-spacing:.14em; text-transform:uppercase; color:var(--faint);
+           border:1px solid rgba(255,255,255,.14); border-radius:999px; padding:3px 8px; }}
+  .more-n {{ font:600 10.5px/1 Inter; color:var(--faint); align-self:center; }}
+  details.weights {{ margin-top:18px; color:var(--mute); font-size:13px; line-height:1.65; max-width:80ch; }}
+  details.weights summary {{ cursor:pointer; font-weight:600; color:#cfd4e0; }}
+  details.weights ul {{ margin:8px 0 0; padding-left:18px; }}
+  details.weights b {{ color:var(--c,#7aa2f7); margin-right:6px; }}
   section.method {{ margin-top:70px; }}
   section.method ul {{ margin:0; padding:0 0 0 18px; color:var(--mute); font-size:13.5px; line-height:1.7; max-width:80ch; }}
   section.method li {{ margin-bottom:6px; }}
@@ -870,6 +1016,7 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
     <section class="method">
       <h2 class="sec">{esc(t['method_h'])}</h2>
       <ul>{method_html}</ul>
+      {weights_html}
     </section>
 
     <footer class="page">
@@ -953,16 +1100,32 @@ def thread_block(th: dict, lang: str, t: dict) -> str:
     that opens the same summary popup as the cards."""
     esc = html.escape
     members = th["members"]
-    color = members[0]["color"]
+    color = next((a["color"] for a in AREAS if a["key"] == th["area"]), members[0]["color"])
+    tema = th.get("kind") == "tema"
+    kicker = t["thread_tema" if tema else "thread_k"]
+    noun = t["thread_n_tema" if tema else "thread_n"]
     rows = "".join(brief_html(c, lang, t=t, image=False) for c in members)
     span = f"{esc(fmt_date(members[-1]['date'], lang))} → {esc(fmt_date(members[0]['date'], lang))}"
     return f"""
         <div class="thread" style="--c:{color}">
-          <div class="thread-k">{esc(t['thread_k'])} · {len(members)} {esc(t['thread_n'])} · {span}</div>
+          <div class="thread-k">{esc(kicker)} · {len(members)} {esc(noun)} · {span}</div>
           <h3 class="thread-t">{esc(th.get('title') or t['thread_generic'])}</h3>
           {f'<p class="thread-s">{esc(th["summary"])}</p>' if th.get('summary') else ''}
           <div class="briefer">{rows}</div>
         </div>"""
+
+
+def weights_block(t: dict) -> str:
+    """The ranking weights, published: every word that moves a story up."""
+    esc = html.escape
+    rows = []
+    for pat, w in BOOST:
+        inner = re.search(r"\((.*)\)", pat).group(1)
+        words = [x.replace(".?", " ").replace("?", "").replace("\\b", "").strip()
+                 for x in inner.split("|")]
+        rows.append(f"<li><b>+{w}</b> {esc(', '.join(sorted(set(words))))}</li>")
+    return (f'<details class="weights"><summary>{esc(t["weights_h"])}</summary>'
+            f'<p>{esc(t["weights_note"])}</p><ul>{"".join(rows)}</ul></details>')
 
 
 def card_html(c, lang, featured=False, t=None, image=True) -> str:
@@ -975,7 +1138,9 @@ def card_html(c, lang, featured=False, t=None, image=True) -> str:
             f'<li><a href="{esc(s["link"])}" target="_blank" rel="noopener">{esc(s["name"])}</a></li>'
             for s in src[1:6]
         )
-        extra = f'<ul class="more-srcs">{links}</ul>'
+        rest = len(src) - 6
+        more = f'<li class="more-n">+{rest}</li>' if rest > 0 else ""
+        extra = f'<ul class="more-srcs">{links}{more}</ul>'
     return f"""
       <article class="card{' featured' if featured else ''}" style="--c:{c['color']}">
         <div class="rank{' feat' if featured else ''}">{len(c['sources']) if len(c['sources']) > 1 else ''}</div>
@@ -986,6 +1151,7 @@ def card_html(c, lang, featured=False, t=None, image=True) -> str:
         <footer>
           <span class="src">{esc(first['name'])}</span>
           <span>&middot;</span><span>{esc(fmt_date(c['date'], lang))}</span>
+          {f'<span class="solo">{esc(t["single"])}</span>' if len(src) == 1 else ''}
           <button type="button" class="go" data-sid="{esc(c.get('sid', ''))}">{esc(t['read'])} &rarr;</button>
         </footer>
       </article>"""
@@ -1145,6 +1311,8 @@ def main() -> None:
                                      for c in featured})
         for c in clusters:
             row = IMG.lookup(cache, c["title"])
+            if row and not IMG.same_publisher(row, [s["link"] for s in c["sources"]]):
+                row = {}
             if not row and c.get("thumb"):
                 row = {"url": c["thumb"], "credit": c["sources"][0]["name"]}
             if row:
