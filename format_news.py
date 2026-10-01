@@ -96,6 +96,18 @@ UI = {
         beat="area più coperta", generated="Generato il", source="fonte",
         more="e altre", footer_note="Chiavi mai incluse in questo file.",
         legend="la composizione della settimana", no_intro="",
+        thread_k="Storia in evoluzione", thread_n="episodi", thread_generic="Episodi collegati",
+        method_h="Fonti e metodo",
+        method=("Gli articoli arrivano da Google News (tramite Serper) negli ultimi 7 giorni, "
+                "con ricerche per area. Le notizie sullo stesso evento sono unite in una scheda "
+                "per somiglianza dei titoli; gli episodi collegati formano una storia in evoluzione.",
+                "L'ordine non è un giudizio editoriale: dipende da freschezza, numero di fonti "
+                "e parole del titolo.",
+                "Le {outlets} testate sono quelle che Google News restituisce: agenzie, quotidiani, "
+                "siti specializzati, comunicati istituzionali, blog e commenti di parte. "
+                "Comparire qui non significa che ne condividiamo la linea.",
+                "Titoli, anteprime e riassunti sono tradotti e scritti da un modello di IA e possono "
+                "contenere errori: fa fede l'articolo originale, linkato in ogni scheda."),
         stats=(("storie", "{n}"), ("eventi unici", "{c}"), ("aree", "{a}"),
                ("eventi per area (min–max)", "{g}"), ("finestra", "{w}")),
     ),
@@ -115,6 +127,18 @@ UI = {
         beat="most-covered beat", generated="Generated", source="source",
         more="more", footer_note="No key material in this file.",
         legend="how the week broke down", no_intro="",
+        thread_k="Developing story", thread_n="episodes", thread_generic="Related episodes",
+        method_h="Sources & method",
+        method=("Articles come from Google News (via Serper) over the last 7 days, searched "
+                "per area. Reports of the same event are merged into one card by headline "
+                "similarity; linked episodes form a developing story.",
+                "Order is not an editorial judgement: it depends on freshness, number of "
+                "sources and headline wording.",
+                "The {outlets} outlets are whatever Google News returns: wires, dailies, trade "
+                "sites, official releases, blogs and partisan commentary. Appearing here does "
+                "not mean we endorse a line.",
+                "Headlines, previews and summaries are translated and written by an AI model "
+                "and may contain errors: the original article, linked on every card, prevails."),
         stats=(("stories", "{n}"), ("unique events", "{c}"), ("areas", "{a}"),
                ("events per area (min–max)", "{g}"), ("window", "{w}")),
     ),
@@ -361,6 +385,111 @@ def cluster(items: list, min_sim: float) -> list:
     return clusters
 
 
+IT_STOP = set("""della dello delle degli dopo come anche sono nella nelle nello negli alla
+alle allo agli dalla dalle questo questa quello quella ancora ultimo ultima nuova nuovo
+contro sulla sulle dello cosa dove perche quando tutti tutte solo piu fra tra per con
+senza sopra sotto""".split())
+
+
+def stem(w: str) -> str:
+    """Crude Italian/English stem: enough to match omofoba/omofobe/omofobi."""
+    return re.sub(r"[aeio]+$", "", w) if len(w) > 4 else w
+
+
+def find_threads(clusters: list, min_size: int = 3) -> list:
+    """Groups of distinct events that are one evolving story.
+
+    The same-event matcher keeps "an assault on Tuesday" and "an assault on
+    Friday" apart, rightly: they are different events. A thread links such
+    events when their headlines share at least three rare stems (say "bologna",
+    "omofob", "aggression"). Rare means it appears in a handful of headlines, so
+    a lone topic word never links anything; two stems were tried and chained
+    unrelated stories together.
+
+    Returns [{"members": [cluster, ...], "area": key}], newest member first;
+    every member also gets c["thread"] = index.
+    """
+    stems = []
+    for c in clusters:
+        stems.append({stem(t) for t in tokens(c["title"]) if t not in IT_STOP})
+    df: dict = {}
+    for st in stems:
+        for t in st:
+            df[t] = df.get(t, 0) + 1
+    cap = max(6, int(0.08 * len(clusters)))
+    rare = [{t for t in st if 2 <= df[t] <= cap} for st in stems]
+
+    parent = list(range(len(clusters)))
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(clusters)):
+        for j in range(i + 1, len(clusters)):
+            shared = rare[i] & rare[j]
+            if len(shared) >= 3:
+                parent[root(i)] = root(j)
+
+    groups: dict = {}
+    for i in range(len(clusters)):
+        groups.setdefault(root(i), []).append(clusters[i])
+    threads = []
+    for members in groups.values():
+        if len(members) < min_size:
+            continue
+        members.sort(key=lambda c: hours(c["date"]))
+        area = Counter(c["area"] for c in members).most_common(1)[0][0]
+        threads.append({"members": members, "area": area})
+    threads.sort(key=lambda t: -len(t["members"]))
+    for n, t in enumerate(threads):
+        for c in t["members"]:
+            c["thread"] = n
+    return threads
+
+
+THREAD_PROMPT = """\
+Questi titoli di giornale raccontano la stessa vicenda in evoluzione.
+Scrivi un titolo breve (max 9 parole) e una sintesi di 1-2 frasi (max 45 parole)
+in italiano, solo con fatti presenti nei titoli, senza opinioni.
+Rispondi ESCLUSIVAMENTE con JSON: {"titolo": "...", "sintesi": "..."}
+
+Titoli (dal piu' recente):
+%s"""
+
+
+def label_threads(threads: list, model: str = None, cache_path: str = None) -> None:
+    """Adds t["title"] / t["summary"] to every thread. Cached by member titles;
+    on failure the thread keeps no label and is shown with a generic heading."""
+    import hashlib
+    import translate as TR
+    model = model or TR.DEFAULT_MODEL
+    cache_path = cache_path or os.path.join(HERE, "ai-news.thr.json")
+    cache = TR.load_cache(cache_path)
+    key = None
+    for t in threads:
+        titles = [show(c) for c in t["members"]]
+        d = hashlib.sha1("\x00".join(sorted(titles)).encode()).hexdigest()[:16]
+        row = cache.get(d)
+        if not row:
+            key = key or TR.load_key(model)
+            for _ in range(3):
+                try:
+                    got = TR.extract_json(TR.call(
+                        key, model, THREAD_PROMPT % "\n".join(f"- {x}" for x in titles)))
+                except Exception:  # noqa: BLE001
+                    continue
+                if got.get("titolo") and got.get("sintesi"):
+                    row = {"t": got["titolo"], "s": got["sintesi"]}
+                    cache[d] = row
+                    TR.save_cache(cache_path, cache)
+                    break
+        if row:
+            t["title"], t["summary"] = row["t"], row["s"]
+
+
 def affinity(a: set, b: set, a_anchor: set, b_anchor: set) -> float:
     """Same-event score for two headlines.
 
@@ -411,8 +540,9 @@ def classify(title: str, snippet: str) -> tuple:
 
 # ------------------------------------------------------------------ html ----
 def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
-                hero=DEFAULT_HERO, images="all") -> str:
+                hero=DEFAULT_HERO, images="all", threads=None) -> str:
     t = UI[lang]
+    threads = threads or []
     esc = html.escape
     L = (lambda i: i) if lang == "it" else (lambda i: i)
 
@@ -447,6 +577,8 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
                          for r in brief_rows)
         more = (f'<p class="more-note">+ {hidden} {esc(t["more_note"])}</p>'
                 if hidden else "")
+        thread_html = "".join(thread_block(th, lang, t) for th in threads
+                              if th["area"] == a["key"])
         sections.append(f"""
       <section id="area-{a['key']}" class="area" style="--c:{a['color']}">
         <header class="area-h">
@@ -454,6 +586,7 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
           <span class="count">{counts[a['key']]}</span>
         </header>
         <p class="area-note">{esc(a[lang][1])}</p>
+        {thread_html}
         <h3 class="sub-label">{esc(t['main_label'])}</h3>
         <div class="grid">{"".join(cards)}</div>
         <h3 class="sub-label">{esc(t['sub_label'])}</h3>
@@ -462,15 +595,20 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
       </section>""")
 
     payload = {}
-    for _, _, main_rows, brief_rows, _ in split_areas(clusters, n_main, n_more):
-        for c in main_rows + brief_rows:
-            first = c["sources"][0]
-            payload[c["sid"]] = dict(
-                title=show(c),
-                meta=f"{first['name']} · {fmt_date(c['date'], lang)}",
-                text=c.get("summary") or show(c, "snippet"),
-                ok=bool(c.get("summary")) or lang != "it", link=first["link"],
-                others=[[x["name"], x["link"]] for x in c["sources"][1:6]])
+    shown_rows = [c for _, _, m, b, _ in split_areas(clusters, n_main, n_more)
+                  for c in m + b]
+    shown_rows += [c for th in threads for c in th["members"]]
+    for c in shown_rows:
+        first = c["sources"][0]
+        payload[c["sid"]] = dict(
+            title=show(c),
+            meta=f"{first['name']} · {fmt_date(c['date'], lang)}",
+            text=c.get("summary") or show(c, "snippet"),
+            ok=bool(c.get("summary")) or lang != "it", link=first["link"],
+            others=[[x["name"], x["link"]] for x in c["sources"][1:6]])
+    outlets = len({x["name"] for c in clusters for x in c["sources"]})
+    method_html = "".join(f"<li>{esc(m.format(outlets=outlets))}</li>"
+                          for m in t["method"])
     stories_json = json.dumps(payload).replace("</", "<\\/")
 
     intro_html = (
@@ -692,6 +830,18 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
   .pop-close:hover {{ color:#fff; }}
   .pop-srcs {{ margin:18px 0 0; font:500 12px/1.9 Inter; color:var(--faint); }}
   .pop-srcs a {{ color:var(--mute); margin-right:12px; }}
+  .thread {{
+    margin:6px 0 30px; padding:22px 24px 10px; border-radius:15px;
+    border:1px solid color-mix(in srgb,var(--c) 32%, transparent);
+    background:linear-gradient(135deg, color-mix(in srgb,var(--c) 11%, transparent), rgba(255,255,255,.012) 70%);
+  }}
+  .thread-k {{ font:600 10.5px/1 Inter; letter-spacing:.22em; text-transform:uppercase; color:var(--c); }}
+  .thread-t {{ font:600 21px/1.3 "Space Grotesk"; margin:12px 0 6px; }}
+  .thread-s {{ font:400 16px/1.6 "Newsreader", Georgia, serif; color:#c3c9d8; margin:0 0 14px; max-width:70ch; }}
+  .thread .briefer {{ grid-template-columns:1fr; }}
+  section.method {{ margin-top:70px; }}
+  section.method ul {{ margin:0; padding:0 0 0 18px; color:var(--mute); font-size:13.5px; line-height:1.7; max-width:80ch; }}
+  section.method li {{ margin-bottom:6px; }}
   footer.page {{
     margin-top:78px; padding-top:26px; border-top:1px solid rgba(255,255,255,.08);
     color:var(--faint); font-size:12px; line-height:1.9; text-align:center;
@@ -716,6 +866,11 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
     <div class="spot-grid">{"".join(spotlight)}</div>
 
     {"".join(sections)}
+
+    <section class="method">
+      <h2 class="sec">{esc(t['method_h'])}</h2>
+      <ul>{method_html}</ul>
+    </section>
 
     <footer class="page">
       {esc(t['generated'])} {generated} &middot; {esc(t['source'])} <code>serper.dev/news?tbs=qdr:w</code><br>
@@ -790,6 +945,23 @@ def thumb_html(c: dict, lang: str, big: bool = False) -> str:
                decoding="async" referrerpolicy="no-referrer"
                onerror="this.parentNode.remove()">
           <span class="photo-credit">{esc(row.get('credit') or 'foto')}</span>
+        </div>"""
+
+
+def thread_block(th: dict, lang: str, t: dict) -> str:
+    """An evolving story: label, one-line synopsis, then every episode as a row
+    that opens the same summary popup as the cards."""
+    esc = html.escape
+    members = th["members"]
+    color = members[0]["color"]
+    rows = "".join(brief_html(c, lang, t=t, image=False) for c in members)
+    span = f"{esc(fmt_date(members[-1]['date'], lang))} → {esc(fmt_date(members[0]['date'], lang))}"
+    return f"""
+        <div class="thread" style="--c:{color}">
+          <div class="thread-k">{esc(t['thread_k'])} · {len(members)} {esc(t['thread_n'])} · {span}</div>
+          <h3 class="thread-t">{esc(th.get('title') or t['thread_generic'])}</h3>
+          {f'<p class="thread-s">{esc(th["summary"])}</p>' if th.get('summary') else ''}
+          <div class="briefer">{rows}</div>
         </div>"""
 
 

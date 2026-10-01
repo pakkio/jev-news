@@ -162,7 +162,9 @@ def main() -> None:
     rows = [(c, kind) for _, _, main_rows, more, _ in
             FN.split_areas(clusters, n_main, n_more)
             for c, kind in [(x, "main") for x in main_rows] + [(x, "more") for x in more]]
+    threads = FN.find_threads(clusters)
     shown = [c for c, _ in rows]
+    shown += [c for th in threads for c in th["members"] if c not in shown]
     featured = [c for c, k in rows if k == "main"]
 
     if do_img:
@@ -200,6 +202,9 @@ def main() -> None:
             c["summary"] = SM.lookup(cache, c["title"])
         print(f"  nuovi {st['done']}, cache {st['cached']}, non disponibili {st['empty']}")
 
+    FN.label_threads(threads, cache_path=f"{OUT}.thr.json")
+    print(f"  fili: {[(th['area'], len(th['members']), th.get('title')) for th in threads]}")
+
     per_area = Counter(c["area"] for c in clusters)
     live = [v for v in per_area.values() if v]
     dates = [c["date"] for c in clusters if FN.hours(c["date"]) < 9999]
@@ -212,7 +217,7 @@ def main() -> None:
 
     open(f"{OUT}.html", "w").write(FN.render_html(
         clusters, meta, lang, None, generated, n_main, n_more,
-        hero="off", images="all" if do_img else "off"))
+        hero="off", images="all" if do_img else "off", threads=threads))
     open(f"{OUT}.md", "w").write(FN.render_md(
         clusters, meta, lang, generated, None, n_main, n_more))
     print(f"\n  {len(raw)} storie -> {len(clusters)} eventi unici, aree: "
