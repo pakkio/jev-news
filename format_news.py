@@ -462,8 +462,8 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
       </section>""")
 
     payload = {}
-    for _, _, main_rows, _, _ in split_areas(clusters, n_main, n_more):
-        for c in main_rows:
+    for _, _, main_rows, brief_rows, _ in split_areas(clusters, n_main, n_more):
+        for c in main_rows + brief_rows:
             first = c["sources"][0]
             payload[c["sid"]] = dict(
                 title=show(c),
@@ -758,8 +758,11 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
         d.showModal();
       }}
       document.addEventListener('click', function (e) {{
-        var b = e.target.closest('.go[data-sid]');
-        if (b) open(b.dataset.sid, getComputedStyle(b.closest('.card')).getPropertyValue('--c'));
+        var b = e.target.closest('.go[data-sid], .brief[data-sid]');
+        if (b) {{
+          e.preventDefault();                      // brief rows are real links: no-JS fallback
+          open(b.dataset.sid, getComputedStyle(b).getPropertyValue('--c'));
+        }}
         else if (e.target === d) d.close();       // click on the backdrop
       }});
       $('pop-x').addEventListener('click', function () {{ d.close(); }});
@@ -823,7 +826,7 @@ def brief_html(c, lang, t=None, image=True) -> str:
            f' decoding="async" referrerpolicy="no-referrer"'
            f' onerror="this.remove()">') if (image and row.get("url")) else ""
     return f"""
-        <a class="brief" href="{esc(first['link'])}" target="_blank" rel="noopener">
+        <a class="brief" href="{esc(first['link'])}" target="_blank" rel="noopener" data-sid="{esc(c.get('sid', ''))}">
           <span class="b-dot"></span>
           {pic}
           <span class="b-txt" title="{esc(c['title'])}">{esc(show(c))}</span>
@@ -993,8 +996,8 @@ def main() -> None:
     if summaries and lang == "it":
         import summarize as SM
         print("  riassunti degli articoli (Jina + OpenRouter)...")
-        shown = [c for _, _, rows, _, _ in split_areas(clusters, n_main, n_more)
-                 for c in rows]
+        shown = [c for _, _, rows, more, _ in split_areas(clusters, n_main, n_more)
+                 for c in rows + more]
         cache, sst = SM.summarize(
             [{"title": c["title"], "links": [x["link"] for x in c["sources"]]}
              for c in shown], model=model, quiet=(lang == "en"))
