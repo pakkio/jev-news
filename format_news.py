@@ -471,13 +471,13 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
                 text=c.get("summary") or show(c, "snippet"),
                 ok=bool(c.get("summary")) or lang != "it", link=first["link"],
                 others=[[x["name"], x["link"]] for x in c["sources"][1:6]])
-    stories_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
+    stories_json = json.dumps(payload).replace("</", "<\\/")
 
     intro_html = (
         f'<p class="intro">{esc(intro)}</p>' if intro else ""
     )
 
-    return f"""<!doctype html>
+    page = f"""<!doctype html>
 <html lang="{lang}">
 <head>
 <meta charset="utf-8">
@@ -771,6 +771,9 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
 </body>
 </html>
 """
+    # Some hosts normalise curly quotes to straight ones, which breaks attributes
+    # and the JSON above; numeric entities cannot be rewritten.
+    return page.encode("ascii", "xmlcharrefreplace").decode("ascii")
 
 
 def thumb_html(c: dict, lang: str, big: bool = False) -> str:
