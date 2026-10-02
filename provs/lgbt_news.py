@@ -250,7 +250,11 @@ def main() -> None:
                 row = {"url": c["thumb"], "credit": c["sources"][0]["name"]}
             if row:
                 c["img"] = row
-        print(f"  trovate {st['found']}, cache {st['cached']}, nessuna {st['empty']}")
+        n_og = IMG.upgrade(featured, cache, f"{OUT}.img.json")   # the article's own header photo
+        print(f"  trovate {st['found']}, cache {st['cached']}, nessuna {st['empty']}; "
+              f"foto dall'articolo (og:image): {n_og}")
+        n_emb, n_bytes = IMG.embed(featured, [c for c, k in rows if k == "more"], f"{OUT}.img.json")
+        print(f"  foto incorporate nell'HTML: {n_emb} ({n_bytes // 1024} KB)")
 
     import translate as TR
     print("  traduzione...")

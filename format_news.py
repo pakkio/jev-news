@@ -234,6 +234,7 @@ HEROES = {
     "laptop":  ("photo-1531297484001-80022131f5a1", "un portatile al buio"),
 }
 DEFAULT_HERO = "earth"
+EMBED_IMAGES = True      # inline the pictures so the page does not depend on 40 CDNs
 FAVICON = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
            "viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' "
            "y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237aa2f7'/%3E"
@@ -257,6 +258,19 @@ def hero_html(hero: str, lang: str) -> str:
                 "&utm_medium=referral")
     else:
         src, href, alt = hero, hero, "hero"
+    if EMBED_IMAGES:
+        import images as IMG
+        cache_path = os.path.join(HERE, "ai-news.img.data.json")
+        cache = {}
+        try:
+            cache = json.load(open(cache_path))
+        except (OSError, ValueError):
+            pass
+        src = IMG.data_uri(src, 1600, cache)
+        try:
+            json.dump(cache, open(cache_path, "w"))
+        except OSError:
+            pass
     return f"""
     <figure class="hero">
       <img src="{esc(src)}" alt="{esc(alt)}" loading="eager"
@@ -1144,6 +1158,8 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
     color:rgba(255,255,255,.62); background:rgba(8,9,13,.62);
     padding:4px 7px; border-radius:5px;
   }}
+  .mini {{ float:right; width:72px; height:72px; object-fit:cover; border-radius:10px; margin:0 0 8px 12px;
+           background:#0b0d13; border:1px solid rgba(255,255,255,.08); }}
   .b-thumb {{
     flex:none; width:44px; height:32px; border-radius:5px; object-fit:cover;
     background:#0b0d13; align-self:center;
@@ -1154,7 +1170,7 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
     color:var(--faint); margin:30px 0 14px; display:flex; align-items:center; gap:12px;
   }}
   h3.sub-label::after {{ content:""; flex:1; height:1px; background:linear-gradient(90deg, rgba(255,255,255,.1), transparent); }}
-  .briefer {{ display:grid; gap:0 26px; grid-template-columns:repeat(auto-fill,minmax(430px,1fr)); }}
+  .briefer {{ display:grid; gap:0 26px; grid-template-columns:repeat(auto-fill,minmax(min(430px,100%),1fr)); }}
   .brief {{
     display:flex; align-items:baseline; gap:11px; padding:11px 4px; text-decoration:none;
     border-bottom:1px solid rgba(255,255,255,.055);
@@ -1165,10 +1181,18 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
   .brief:hover .b-dot {{ opacity:1; box-shadow:0 0 0 4px color-mix(in srgb,var(--c) 22%, transparent); }}
   .b-txt {{ font:500 14.5px/1.45 Inter; color:#c9cfdd; flex:1; min-width:0; }}
   .brief:hover .b-txt {{ color:#fff; }}
-  .b-meta {{ flex:none; font:500 11.5px/1.4 Inter; color:var(--faint); white-space:nowrap; }}
+  .b-meta {{ flex:0 1 auto; max-width:42%; font:500 11.5px/1.4 Inter; color:var(--faint);
+             text-align:right; overflow-wrap:anywhere; }}
   .b-meta em {{ font-style:normal; color:var(--c); font-weight:600; }}
   .more-note {{ font:400 13px/1 Inter; color:var(--faint); margin:20px 0 0; font-style:italic; }}
   @media (max-width:760px) {{ .card.featured {{ grid-column:span 1; }} .card.featured .face {{ padding:22px; }} }}
+  @media (max-width:560px) {{
+    /* phones: the outlet and date drop under the headline instead of widening the row */
+    .brief {{ flex-wrap:wrap; }}
+    .b-meta {{ flex-basis:100%; max-width:none; text-align:left; padding-left:17px; }}
+    .wrap {{ padding:0 18px; }}
+    .hero {{ margin:0 -18px; }}
+  }}
   dialog.pop {{
     width:min(620px,calc(100vw - 32px)); max-height:calc(100vh - 48px); padding:0; border-radius:16px;
     color:var(--fg); background:#0e1018; border:1px solid color-mix(in srgb,var(--c,#7aa2f7) 40%, transparent);
@@ -1337,6 +1361,11 @@ def thumb_html(c: dict, lang: str, big: bool = False) -> str:
     if not row.get("url"):
         return ""
     esc = html.escape
+    if row.get("lowres") or "gstatic.com" in row["url"]:
+        # a 92x92 News thumbnail: shown at its own size, never stretched into a banner
+        return f"""
+        <img class="mini" src="{esc(row['url'])}" alt="" loading="lazy" decoding="async"
+             referrerpolicy="no-referrer" onerror="this.remove()">"""
     return f"""
         <div class="thumb{' big' if big else ''}">
           <img src="{esc(row['url'])}" alt="{esc(c['title'])}" loading="lazy"
@@ -1528,6 +1557,7 @@ def render_term(clusters, lang, generated, intro, n_main=4, n_more=6) -> str:
 
 # ----------------------------------------------------------------- main -----
 def main() -> None:
+    global EMBED_IMAGES
     argv = sys.argv[1:]
     path, lang, intro = None, "it", None
     n_main, n_more = 4, 6
@@ -1560,6 +1590,8 @@ def main() -> None:
             hero = argv[i + 1]; i += 2
         elif a == "--summaries":
             summaries = not summaries; i += 1
+        elif a == "--no-embed":
+            EMBED_IMAGES = False; i += 1
         elif a == "--images":
             images = argv[i + 1]; i += 2
         elif a.startswith("--"):
@@ -1605,6 +1637,13 @@ def main() -> None:
                 row = {"url": c["thumb"], "credit": c["sources"][0]["name"]}
             if row:
                 c["img"] = row
+        n_og = IMG.upgrade(featured, cache)           # the article's own header photo
+        print(f"  foto dall'articolo (og:image): {n_og}")
+        if EMBED_IMAGES:
+            others = [c for _, _, m, o, _ in split_areas(clusters, n_main, n_more)
+                      for c in m + o if c not in featured]
+            n_emb, n_bytes = IMG.embed(featured, others)
+            print(f"  foto incorporate nell'HTML: {n_emb} ({n_bytes // 1024} KB)")
         print(f"  trovate {ist['found']}, dalla cache {ist['cached']}, "
               f"nessuna {ist['empty']}\n")
 

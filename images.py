@@ -16,12 +16,14 @@ free and only new stories cost a credit.
 """
 
 import hashlib
+import html
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 API = "https://google.serper.dev/images"
@@ -151,6 +153,127 @@ def same_publisher(row: dict, links: list) -> bool:
     thumbnail (which belongs to the article) or no picture."""
     page = (row or {}).get("page")
     return bool(page) and registrable(page) in {registrable(u) for u in links if u}
+
+
+OG_META = (
+    re.compile(r'<meta[^>]+(?:property|name)=["\'](?:og:image(?::secure_url)?|twitter:image(?::src)?)'
+               r'["\'][^>]*content=["\']([^"\']+)["\']', re.I),
+    re.compile(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)='
+               r'["\'](?:og:image|twitter:image)["\']', re.I),
+)
+OG_JUNK = ("logo", "icon", "placeholder", "default", "fallback", "sprite", "avatar",
+           "blank", "/social/", "share-image")
+
+
+def og_image(links: list, source: str = "") -> dict:
+    """The article's own header photo: the og:image the publisher declares.
+
+    Free (one page fetch), from the story's own site, and normally 1200px wide,
+    where the News thumbnail is 92x92. Publisher fallback art (a logo used when
+    an article has no picture) is recognised by its file name and refused."""
+    for link in links[:3]:
+        req = urllib.request.Request(link, headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+            "Accept-Language": "en,it;q=0.8"})
+        try:
+            page = urllib.request.urlopen(req, timeout=15).read(400_000).decode(errors="replace")
+        except Exception:  # noqa: BLE001
+            continue
+        for rx in OG_META:
+            m = rx.search(page)
+            if not m:
+                continue
+            url = urljoin(link, html.unescape(m.group(1)).strip())
+            if not url.lower().startswith("http") or any(j in url.lower() for j in OG_JUNK):
+                continue
+            if verify(url):
+                return {"url": url, "credit": (source or urlsplit(link).netloc)[:40], "page": link}
+    return {}
+
+
+def is_lowres(row: dict) -> bool:
+    """Google News thumbnails (encrypted-tbn*.gstatic.com) are 92x92."""
+    return "gstatic.com" in (row or {}).get("url", "")
+
+
+def upgrade(featured: list, cache: dict, cache_path: str = None) -> int:
+    """Swap a card's thumbnail for its article's og:image, when there is one.
+    Results (including 'none') are cached under 'og:<title hash>'."""
+    cache_path = cache_path or os.path.join(HERE, "ai-news.img.json")
+    swapped = 0
+    for c in featured:
+        if c.get("img") and not is_lowres(c["img"]):
+            continue
+        k = "og:" + digest(c["title"])
+        if k not in cache:
+            cache[k] = og_image([s["link"] for s in c["sources"]], c["sources"][0]["name"])
+        if cache[k]:
+            c["img"] = dict(cache[k])
+            swapped += 1
+    save_cache(cache_path, cache)
+    return swapped
+
+
+def data_uri(url: str, width: int, cache: dict) -> str:
+    """The picture as an inline data: URI, resized to `width` and re-encoded as JPEG.
+
+    A page that hotlinks forty publisher CDNs is at the mercy of each one: a
+    viewer such as Teams' embedded browser, a referer check, a CSP or a dead link
+    each turn a photo into an empty box. Inline pictures cannot fail that way.
+    Returns the original URL when the picture cannot be fetched or Pillow is
+    missing, so the page degrades to the old behaviour. Results, failures
+    included, are cached by (width, url)."""
+    key = f"{width}|{url}"
+    if key in cache:
+        return cache[key] or url
+    uri = ""
+    try:
+        import base64
+        import io
+        from PIL import Image
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+            "Referer": "https://www.google.com/", "Accept": "image/avif,image/webp,image/*,*/*;q=0.8"})
+        raw = urllib.request.urlopen(req, timeout=20).read(8_000_000)
+        im = Image.open(io.BytesIO(raw))
+        im.load()
+        if im.mode in ("RGBA", "LA", "P"):
+            im = im.convert("RGBA")
+            back = Image.new("RGB", im.size, (11, 13, 19))          # the page's dark background
+            back.paste(im, mask=im.split()[-1])
+            im = back
+        elif im.mode != "RGB":
+            im = im.convert("RGB")
+        if im.width > width:
+            im = im.resize((width, max(1, round(im.height * width / im.width))), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=72, optimize=True, progressive=True)
+        uri = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    except Exception:  # noqa: BLE001
+        uri = ""
+    cache[key] = uri
+    return uri or url
+
+
+def embed(cards: list, rows: list, cache_path: str = None) -> tuple:
+    """Inline the pictures of the cards (720px) and of the compact rows (120px).
+    Returns (pictures inlined, total bytes of the data URIs)."""
+    cache_path = (cache_path or os.path.join(HERE, "ai-news.img.json")).replace(".json", ".data.json")
+    cache = load_cache(cache_path)
+    done = size = 0
+    for group, width in ((cards, 720), (rows, 120)):
+        for c in group:
+            row = c.get("img")
+            if not row or row["url"].startswith("data:"):
+                continue
+            lowres = is_lowres(row) or row.get("lowres", False)    # remember before the URL goes
+            uri = data_uri(row["url"], width, cache)
+            if uri.startswith("data:"):
+                c["img"] = dict(row, url=uri, lowres=lowres)
+                done += 1
+                size += len(uri)
+    save_cache(cache_path, cache)
+    return done, size
 
 
 MAGIC = (b"\xff\xd8\xff", b"\x89PNG", b"GIF8", b"BM", b"RIFF", b"II*\x00", b"MM\x00*")
