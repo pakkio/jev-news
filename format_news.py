@@ -99,8 +99,13 @@ UI = {
         legend="la composizione della settimana", no_intro="",
         thread_k="Storia in evoluzione", thread_n="episodi", thread_generic="Episodi collegati",
         thread_tema="Tema ricorrente", thread_n_tema="storie", single="fonte unica",
+        unverified="fonte unica, non confermata",
         score_tip="Punteggio di rilevanza: freschezza + numero di fonti + parole del titolo (vedi Fonti e metodo)",
-        weights_h="Come si calcola l'ordine", weights_note=(
+        weights_h="Come si calcola l'ordine",
+        weights_plain=("Punteggio = freschezza (fino a 30 punti, in calo nell'arco di circa 5 giorni) "
+                       "+ 5 punti per ogni fonte (fino a 5) + fino a 6 punti per uno snippet informativo. "
+                       "Nessuna parola del titolo viene premiata."),
+        weights_note=(
             "Punteggio = freschezza (fino a 30 punti, in calo nell'arco di circa 5 giorni) "
             "+ 5 punti per ogni fonte (fino a 5) + fino a 6 punti per uno snippet informativo "
             "+ bonus per le parole qui sotto, cercate nel titolo e nello snippet in inglese. "
@@ -137,8 +142,13 @@ UI = {
         legend="how the week broke down", no_intro="",
         thread_k="Developing story", thread_n="episodes", thread_generic="Related episodes",
         thread_tema="Recurring theme", thread_n_tema="stories", single="single source",
+        unverified="single source, unconfirmed",
         score_tip="Relevance score: freshness + number of sources + headline words (see Sources & method)",
-        weights_h="How the order is computed", weights_note=(
+        weights_h="How the order is computed",
+        weights_plain=("Score = freshness (up to 30 points, decaying over about 5 days) + 5 points "
+                       "per source (up to 5) + up to 6 points for an informative snippet. No headline "
+                       "word is rewarded."),
+        weights_note=(
             "Score = freshness (up to 30 points, decaying over about 5 days) + 5 points per "
             "source (up to 5) + up to 6 points for an informative snippet + a bonus for the "
             "words below, matched in the headline and snippet. The weights are our choice and "
@@ -189,15 +199,18 @@ BOOST = [
 ]
 
 
+USE_BOOST = True   # False: rank on freshness, sources and snippet only (lexicon is English)
+
+
 def score(c: dict) -> float:
     """Heuristic importance: freshness, breadth of coverage, headline weight."""
     s = max(0.0, 30 - hours(c["date"]) / 4)          # decays over ~5 days
     s += min(len(c["sources"]), 5) * 5                # several outlets = bigger
     s += min(len(c["snippet"]) / 45, 6)               # informative snippet
-    for pat, w in BOOST:
+    for pat, w in (BOOST if USE_BOOST else []):
         if re.search(pat, f"{c['title']} {c['snippet']}", re.I):
             s += w
-    return s
+    return s - c.get("penalty", 0)       # e.g. a single source nobody could confirm
 
 
 MESI_IT = ("gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
@@ -355,6 +368,11 @@ def split_areas(clusters: list, n_main: int, n_more: int,
             rows = [c for c in rows if c.get("thread") is None] or rows
         if not rows:
             continue
+        # unconfirmed stories (a penalty set by the caller) leave the main cards but
+        # stay visible: first among the secondary rows, never hidden behind the cap
+        good = [c for c in rows if not c.get("penalty")]
+        weak = [c for c in rows if c.get("penalty")]
+        rows = good[:n_main] + weak + good[n_main:]
         out.append((a, rows[0], rows[:n_main], rows[n_main:n_main + n_more],
                     max(0, len(rows) - n_main - n_more)))
     return out
@@ -476,9 +494,16 @@ def cluster(items: list, min_sim: float) -> list:
 
 def finalize(c: dict) -> None:
     """Derived fields of a cluster; re-run after members are added to it."""
-    # headline, snippet, link and outlet must come from ONE article: the member
-    # whose title the card carries. The rest follow, freshest first.
-    rep = next((m for m in c["members"] if m["title"] == c["title"]), c["members"][0])
+    # The card speaks with the voice of the FIRST outlet to report the story: the
+    # oldest member, whatever its political colour or its size. Headline, snippet,
+    # link and outlet all come from that one article; the others follow, freshest
+    # first, as "other sources". An unparsable date never counts as the oldest.
+    def age(m):
+        h = hours(m["date"])
+        return (-1.0 if h >= 9999 else h, len(m["title"]))
+
+    rep = max(c["members"], key=age)
+    c["title"] = rep["title"]
     order = [rep] + sorted((m for m in c["members"] if m is not rep),
                            key=lambda m: hours(m["date"]))
     seen, sources = set(), []
@@ -666,6 +691,8 @@ def label_threads(threads: list, model: str = None, cache_path: str = None) -> N
     cache = TR.load_cache(cache_path)
     key = None
     for t in threads:
+        if t.get("title"):
+            continue                       # already labelled (find_threads_llm)
         titles = [show(c) for c in t["members"]]
         d = hashlib.sha1("\x00".join(sorted(titles)).encode()).hexdigest()[:16]
         row = cache.get(d)
@@ -688,6 +715,90 @@ def label_threads(threads: list, model: str = None, cache_path: str = None) -> N
 
 MIN_SHARED_IDF = 0.0   # set by callers that want it: see affinity()
 MERGE_SWEEP = False    # same for the cluster re-merge sweep: see cluster()
+
+
+THREADS_PROMPT = """\
+Sono titoli di giornale della stessa settimana, numerati, con area e data.
+Trova i FILI: gruppi di 3-8 titoli che raccontano la stessa vicenda che evolve,
+oppure lo stesso tema specifico in luoghi o casi diversi (per esempio tre
+referendum sugli atleti trans in tre Stati, o una serie di aggressioni nella
+stessa citta'). I titoli di un filo possono stare in aree diverse.
+Regole:
+- al massimo 5 fili, i piu' solidi: meglio pochi fili precisi che molti generici;
+- un filo ha almeno 3 titoli e un fatto comune preciso (una vicenda, un luogo, una
+  causa, un voto); niente fili-contenitore ("Pride 2026", "matrimonio egualitario",
+  "persone trans", "diritti LGBT");
+- ogni titolo sta in un solo filo;
+- "tipo": "storia" se riguardano lo stesso luogo o la stessa vicenda, "tema" se
+  riguardano lo stesso argomento in luoghi o casi diversi;
+- "titolo": massimo 9 parole, deve dire il fatto o il tema; mai un elenco di nomi
+  separati da virgole o da due punti;
+- "sintesi": 1-2 frasi (massimo 45 parole), solo fatti presenti nei titoli.
+Rispondi ESCLUSIVAMENTE con JSON:
+{"fili": [{"tipo": "storia", "titolo": "...", "sintesi": "...", "numeri": [1, 5, 8]}]}
+({"fili": []} se non ce ne sono).
+
+Titoli:
+%s"""
+
+
+def find_threads_llm(clusters: list, model: str = None, cache_path: str = None,
+                     quiet: bool = False, max_threads: int = 5) -> list:
+    """Threads chosen by a model, with their title and synopsis.
+
+    The word-overlap version (find_threads) cannot see that an insurer's refusal,
+    a federal report and a state fund are one fight over the same care, or that
+    two polls are one poll with two questions. A model reading all headlines at
+    once can; the guard rails are on the output: 3-8 titles per thread, each
+    cluster in at most one, a title and synopsis present. The result is cached by
+    the exact list of headlines. Returns [] when the model is unavailable, so
+    the caller can fall back on find_threads."""
+    import hashlib
+    import translate as TR
+    model = model or TR.DEFAULT_MODEL
+    cache_path = cache_path or os.path.join(HERE, "ai-news.thr2.json")
+    cache = TR.load_cache(cache_path)
+    order = sorted(range(len(clusters)), key=lambda i: clusters[i]["title"])
+    lines = [f"{n}. [{clusters[i]['area']}] {clusters[i]['title']} ({clusters[i]['date']})"
+             for n, i in enumerate(order, 1)]
+    d = hashlib.sha1("\n".join(clusters[i]["title"] for i in order).encode()).hexdigest()[:16]
+    found = cache.get(d)
+    if found is None:
+        key = TR.load_key(model)
+        for _ in range(3):
+            try:
+                got = TR.extract_json(TR.call(key, model, THREADS_PROMPT % "\n".join(lines),
+                                              retries=1, timeout=400))   # ~2-3 minutes for 100 titles
+            except Exception:  # noqa: BLE001
+                continue
+            if isinstance(got.get("fili"), list):
+                found = got["fili"]
+                cache[d] = found
+                TR.save_cache(cache_path, cache)
+                break
+    threads, used = [], set()
+    for f in found or []:
+        idx = [order[n - 1] for n in dict.fromkeys(f.get("numeri", []))
+               if isinstance(n, int) and 1 <= n <= len(order)]
+        idx = [i for i in idx if i not in used]
+        if not 3 <= len(idx) <= 8 or not f.get("titolo") or not f.get("sintesi"):
+            continue
+        used.update(idx)
+        members = sorted((clusters[i] for i in idx), key=lambda c: hours(c["date"]))
+        threads.append({"members": members,
+                        "area": Counter(c["area"] for c in members).most_common(1)[0][0],
+                        "kind": "storia" if f.get("tipo") == "storia" else "tema",
+                        "title": str(f["titolo"]).strip(), "summary": str(f["sintesi"]).strip()})
+    # stories before themes, then by size; the page shows a few, not every grouping
+    threads.sort(key=lambda t: (t["kind"] != "storia", -len(t["members"])))
+    threads = threads[:max_threads]
+    for n, t in enumerate(threads):
+        for c in t["members"]:
+            c["thread"] = n
+        if not quiet:
+            print(f"  filo [{t['kind']}] {t['title']}: " +
+                  " | ".join(c["title"][:34] for c in t["members"]))
+    return threads
 
 
 def affinity(a: set, b: set, a_anchor: set, b_anchor: set, idf: dict = None) -> float:
@@ -1258,6 +1369,9 @@ def thread_block(th: dict, lang: str, t: dict) -> str:
 def weights_block(t: dict) -> str:
     """The ranking weights, published: every word that moves a story up."""
     esc = html.escape
+    if not USE_BOOST:
+        return (f'<details class="weights"><summary>{esc(t["weights_h"])}</summary>'
+                f'<p>{esc(t["weights_plain"])}</p></details>')
     rows = []
     for pat, w in BOOST:
         inner = re.search(r"\((.*)\)", pat).group(1)
@@ -1313,7 +1427,7 @@ def card_html(c, lang, featured=False, t=None, image=True) -> str:
         <footer>
           <span class="src">{esc(first['name'])}</span>
           <span>&middot;</span><span>{esc(fmt_date(c['date'], lang))}</span>
-          {f'<span class="solo">{esc(t["single"])}</span>' if len(src) == 1 else ''}
+          {f'<span class="solo">{esc(t["unverified" if c.get("penalty") else "single"])}</span>' if len(src) == 1 else ''}
           {f'<span class="badge"><b>{len(src)}</b> {esc(t["sources"])}</span>' if len(src) > 1 else ''}
           <span class="badge score" title="{esc(t['score_tip'])}">&#9733; {round(score(c))}</span>
           <button type="button" class="go" data-sid="{esc(c.get('sid', ''))}">{esc(t['read'])} &rarr;</button>
@@ -1329,6 +1443,8 @@ def brief_html(c, lang, t=None, image=True) -> str:
     esc = html.escape
     first = c["sources"][0]
     extra = (f' <em>+{len(c["sources"]) - 1}</em>' if len(c["sources"]) > 1 else "")
+    if c.get("penalty"):
+        extra += f' <em>{esc(t["unverified"])}</em>'
     row = c.get("img") or {}
     pic = (f'<img class="b-thumb" src="{esc(row["url"])}" alt="" loading="lazy"'
            f' decoding="async" referrerpolicy="no-referrer"'
@@ -1477,6 +1593,8 @@ def main() -> None:
         print("  immagini per le storie in evidenza (Serper Images)...")
         cache, ist = IMG.fetch([c["title"] for c in featured],
                                lang=lang, quiet=(lang == "en"),
+                               aliases={c["title"]: [m["title"] for m in c["members"]]
+                                        for c in featured},
                                want={c["title"]: [s["link"] for s in c["sources"]]
                                      for c in featured})
         for c in clusters:

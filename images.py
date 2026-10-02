@@ -187,13 +187,22 @@ def query_for(title: str, lang: str) -> str:
 
 
 def fetch(titles: list, lang: str = "it", cache_path: str = None,
-          quiet: bool = False, want: dict = None) -> tuple:
+          quiet: bool = False, want: dict = None, aliases: dict = None) -> tuple:
     """titles: list of strings, want: {title: [article urls]}.
     Returns (cache, stats) - cache is keyed by title hash."""
     key = load_key()
     cache_path = cache_path or os.path.join(HERE, "ai-news.img.json")
     cache = load_cache(cache_path)
     want = want or {}
+    # a story whose representative headline changed is still the same story: reuse
+    # a picture already found under any of its other headlines instead of paying
+    # for a new search
+    for title in titles:
+        if digest(title) not in cache:
+            for alt in (aliases or {}).get(title, []):
+                if digest(alt) in cache:
+                    cache[digest(title)] = cache[digest(alt)]
+                    break
     todo = [t for t in dict.fromkeys(titles) if digest(t) not in cache]
     stats = {"cached": len(titles) - len(todo), "found": 0, "empty": 0}
 

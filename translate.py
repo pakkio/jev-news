@@ -106,7 +106,7 @@ def save_cache(path: str, cache: dict) -> None:
     os.replace(tmp, path)
 
 
-def call(key: str, model: str, payload: str, retries: int = 3) -> dict:
+def call(key: str, model: str, payload: str, retries: int = 3, timeout: int = 90) -> dict:
     url, _, model_id = provider(model)
     body = {"model": model_id, "temperature": 0,
             "messages": [{"role": "user", "content": payload}]}
@@ -120,7 +120,7 @@ def call(key: str, model: str, payload: str, retries: int = 3) -> dict:
                  "X-Title": "AI Briefing"})
     for attempt in range(retries):
         try:
-            with urllib.request.urlopen(req, timeout=90) as r:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read())["choices"][0]["message"]["content"] or ""
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503) and attempt < retries - 1:

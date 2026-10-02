@@ -7,6 +7,11 @@ cache) stanno qui in provs/ con prefisso lgbt-news.
 
 Usage:
   python3 provs/lgbt_news.py [--max-credits 30] [--reuse] [--no-summaries] [--no-images]
+                             [--corroborate]
+
+--corroborate spends Serper credits (1 per main card that rests on a single
+unreadable source, at most 6) to look for a second outlet. Off by default: without
+it those cards are simply demoted and marked "single source, unconfirmed".
 """
 
 import json
@@ -134,15 +139,67 @@ def collect(max_credits: int) -> list:
     return items
 
 
+JUDGE = """\
+Titolo di riferimento: %s
+
+Candidati, numerati:
+%s
+
+Quali candidati riportano LA STESSA NOTIZIA (stesso fatto, stesso momento)? Lo stesso
+tema non basta.
+Rispondi ESCLUSIVAMENTE con JSON: {"stessa": [1, 3]}  ({"stessa": []} se nessuno)."""
+
+
+def corroborate(cands: list, max_checks: int = 6) -> tuple:
+    """A main card with one outlet and no summary is a claim nobody could check
+    (T24's closure came from a single site Jina could not read). One Serper
+    search by headline per card, then a model says which hits report the very
+    same news; those become extra sources. Returns (cards that gained sources,
+    Serper credits spent)."""
+    import images as IMG
+    import translate as TR
+    key, model = CN.load_key(), TR.DEFAULT_MODEL
+    mkey, gained, spent = TR.load_key(model), 0, 0
+    for c in cands[:max_checks]:
+        title = c["members"][0]["title"]
+        mine = {IMG.registrable(m["link"]) for m in c["members"]}
+        spent += 1
+        hits = [h for h in serper_news(key, title[:110], None, num=8)
+                if h.get("link") and IMG.registrable(h["link"]) not in mine][:6]
+        same = []
+        if hits:
+            listing = "\n".join(f"{i}. {h.get('title', '')} - {h.get('source', '')}"
+                                for i, h in enumerate(hits, 1))
+            try:
+                got = TR.extract_json(TR.call(mkey, model, JUDGE % (title, listing)))
+            except Exception:  # noqa: BLE001
+                got = {}
+            same = [hits[n - 1] for n in got.get("stessa", [])
+                    if isinstance(n, int) and 1 <= n <= len(hits)]
+        for h in same:
+            c["members"].append({
+                "title": h.get("title", ""), "link": h["link"], "url": CN.canonical(h["link"]),
+                "snippet": h.get("snippet", ""), "source": h.get("source", ""),
+                "date": h.get("date", ""), "area": c["area"], "color": c["color"],
+                "imageUrl": h.get("imageUrl", ""), "q": "conferma"})
+        if same:
+            FN.finalize(c)
+            gained += 1
+        print(f"  conferma {title[:56]!r}: {'+%d fonti' % len(same) if same else 'nessuna conferma'}")
+    return gained, spent
+
+
 def main() -> None:
     argv = sys.argv[1:]
     max_credits = int(argv[argv.index("--max-credits") + 1]) if "--max-credits" in argv else 30
     do_sum, do_img = "--no-summaries" not in argv, "--no-images" not in argv
+    do_corr = "--corroborate" in argv
     n_main, n_more, lang = 4, 6, "it"
 
     # stesso motore, altro tema
     FN.AREAS[:] = AREAS
     FN.MIN_SHARED_IDF = 7.0      # two shared words must carry real information
+    FN.USE_BOOST = False         # the ranking lexicon is English tech/finance: not used here
     FN.MERGE_SWEEP = True        # rejoin clusters that converged after the greedy pass
     FN.UI[lang].update(TEXT_IT)
 
@@ -167,7 +224,8 @@ def main() -> None:
     print(f"  unite per parafrasi: {merged} -> {len(clusters)} eventi")
     for n, c in enumerate(clusters):
         c["sid"] = f"s{n}"
-    threads = FN.find_threads(clusters)
+    threads = (FN.find_threads_llm(clusters, cache_path=f"{OUT}.thr2.json")
+               or FN.find_threads(clusters))
     rows = [(c, kind) for _, _, main_rows, more, _ in
             FN.split_areas(clusters, n_main, n_more, skip_threaded=True)
             for c, kind in [(x, "main") for x in main_rows] + [(x, "more") for x in more]]
@@ -180,6 +238,8 @@ def main() -> None:
         print("  immagini per le storie in evidenza...")
         cache, st = IMG.fetch([c["title"] for c in featured], lang=lang,
                               cache_path=f"{OUT}.img.json",
+                              aliases={c["title"]: [m["title"] for m in c["members"]]
+                                       for c in featured},
                               want={c["title"]: [s["link"] for s in c["sources"]]
                                     for c in featured})
         for c in clusters:
@@ -213,6 +273,30 @@ def main() -> None:
         print(f"  nuovi {st['done']}, cache {st['cached']}, non disponibili {st['empty']}, "
               f"controllati {st['checked']}, scartati {st['rejected']}")
 
+    if do_sum:
+        # main cards resting on one unreadable source: look for a second outlet, retry
+        # the summary with it, and demote what stays unconfirmed
+        weak = [c for c in featured if len(c["sources"]) == 1 and not c.get("summary")]
+        if weak:
+            print(f"  fonte unica senza riassunto tra le principali: {len(weak)}")
+            if do_corr:
+                gained, spent = corroborate(weak)
+                print(f"  conferme trovate: {gained} | crediti Serper spesi: {spent}")
+                sp, vp = f"{OUT}.sum.json", f"{OUT}.sum.ver.json"
+                sc, vc = TR.load_cache(sp), TR.load_cache(vp)
+                for c in weak:
+                    sc.pop(SM.digest(c["title"]), None)
+                    vc.pop(SM.digest(c["title"]), None)
+                TR.save_cache(sp, sc)
+                TR.save_cache(vp, vc)
+                cache, st = SM.summarize(
+                    [{"title": c["title"], "links": [x["link"] for x in c["sources"]]}
+                     for c in weak], cache_path=sp)
+                for c in weak:
+                    c["summary"] = SM.lookup(cache, c["title"])
+            for c in weak:
+                if len(c["sources"]) == 1 and not c.get("summary"):
+                    c["penalty"] = 40            # unconfirmed: leaves the main cards
     FN.label_threads(threads, cache_path=f"{OUT}.thr.json")
     print(f"  fili: {[(th['area'], len(th['members']), th.get('title')) for th in threads]}")
 
