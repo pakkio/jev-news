@@ -19,6 +19,8 @@ import urllib.error
 import urllib.request
 import uuid
 
+from meter import METER
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_MODEL = os.environ.get("LLM_MODEL", "openrouter/free")
 API = "https://openrouter.ai/api/v1/chat/completions"
@@ -121,7 +123,9 @@ def call(key: str, model: str, payload: str, retries: int = 3, timeout: int = 90
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                return json.loads(r.read())["choices"][0]["message"]["content"] or ""
+                reply = json.loads(r.read())
+                METER.llm(reply.get("usage"))
+                return reply["choices"][0]["message"]["content"] or ""
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503) and attempt < retries - 1:
                 time.sleep(2 ** (attempt + 1))
@@ -163,8 +167,10 @@ def translate(pairs: list, model: str = DEFAULT_MODEL, batch: int = 10,
             todo.append((d, p))
     stats = {"cached": len(pairs) - len(todo), "translated": 0, "failed": 0}
 
+    METER.set_total(len(todo))
     for i in range(0, len(todo), batch):
         chunk = todo[i:i + batch]
+        METER.tick(len(chunk))
         numbered = "\n".join(
             f'{j}. "t": {json.dumps(p["title"], ensure_ascii=False)},'
             f' "s": {json.dumps(p.get("snippet", ""), ensure_ascii=False)}'

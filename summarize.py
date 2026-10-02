@@ -27,7 +27,9 @@ import sys
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import decide as D
 import main as M
+from meter import METER
 import translate as TR
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -129,7 +131,8 @@ def body_only(text: str) -> str:
 
 
 def direct_read(link: str) -> str:
-    """Plain GET with a browser UA, tags stripped: for sites Jina cannot reach."""
+    """Plain GET with a browser UA, tags stripped but paragraph breaks kept: for sites
+    Jina cannot reach."""
     req = urllib.request.Request(link, headers={
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                       "Chrome/124 Safari/537.36",
@@ -139,19 +142,36 @@ def direct_read(link: str) -> str:
     except Exception:  # noqa: BLE001
         return ""
     page = re.sub(r"(?s)<(script|style|nav|header|footer)[^>]*>.*?</\1>", " ", page)
-    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", page))).strip()
+    page = re.sub(r"(?i)</(p|div|li|h[1-6]|tr|section|article)>|<br\s*/?>", "\n", page)
+    lines = (re.sub(r"[ \t\r\f\v]+", " ", html.unescape(re.sub(r"<[^>]+>", " ", ln))).strip()
+             for ln in page.split("\n"))
+    return "\n".join(ln for ln in lines if ln)
 
 
-def article_text(links: list, log=print) -> str:
+def usable_text(raw: str, para_cache: dict, log) -> tuple:
+    """(text to summarise, whether it is enough). Jev keeps the paragraphs that are
+    article prose and drops menus, banners and paywall prompts; if Jev is not
+    available the old heuristic (start at the first long line) is used."""
+    if para_cache is not None:
+        try:
+            prose = D.article_prose(raw, para_cache)
+            return prose, len(prose) >= D.MIN_PROSE
+        except (SystemExit, Exception) as e:  # noqa: BLE001 - no key, service down
+            log(f"      Jev non disponibile ({str(e)[:40]}): euristica")
+    text = body_only(M.clean_content(raw)) if raw else ""
+    return text, len(text) >= MIN_CHARS
+
+
+def article_text(links: list, log=print, para_cache: dict = None) -> str:
     for link in links[:3]:
-        ok, text = M.jina_read(link)
-        text = body_only(M.clean_content(text)) if ok else ""
-        log(f"      jina {'ok' if len(text) >= MIN_CHARS else ('KO' if not ok else 'corto')} "
-            f"{len(text)} car  {link[:70]}")
-        if len(text) < MIN_CHARS:
-            text = direct_read(link)
-            log(f"      diretto {'ok' if len(text) >= MIN_CHARS else 'KO'} {len(text)} car")
-        if len(text) >= MIN_CHARS:
+        ok, raw = M.jina_read(link)
+        text, enough = usable_text(raw if ok else "", para_cache, log)
+        log(f"      jina {'ok' if enough else ('KO' if not ok else 'corto')} "
+            f"{len(text)} car di prosa  {link[:70]}")
+        if not enough:
+            text, enough = usable_text(direct_read(link), para_cache, log)
+            log(f"      diretto {'ok' if enough else 'KO'} {len(text)} car di prosa")
+        if enough:
             return text[:MAX_CHARS]
     return ""
 
@@ -235,6 +255,8 @@ def summarize(stories: list, model: str = TR.DEFAULT_MODEL,
     cache_path = cache_path or os.path.join(HERE, "ai-news.sum.json")
     ver_path = cache_path.replace(".json", ".ver.json")
     cache, ver = TR.load_cache(cache_path), TR.load_cache(ver_path)
+    para_path = cache_path.replace(".json", ".para.json")
+    para_cache = TR.load_cache(para_path)
 
     todo = []
     for s in stories:
@@ -253,7 +275,7 @@ def summarize(stories: list, model: str = TR.DEFAULT_MODEL,
         log = (lambda m: None) if quiet else lines.append
         log(f"  [{n}/{len(todo)}] {s['title'][:80]}")
         d = digest(s["title"])
-        text = article_text(s["links"], log=log)
+        text = article_text(s["links"], log=log, para_cache=para_cache)
         fresh = d not in cache
         summary = "" if fresh else cache[d]
         if fresh and text:
@@ -276,9 +298,11 @@ def summarize(stories: list, model: str = TR.DEFAULT_MODEL,
         return d, summary, mark, bool(text), lines
 
     workers = max(1, int(os.environ.get("SUMMARY_WORKERS", "4")))
+    METER.set_total(len(todo))
     with ThreadPoolExecutor(workers) as pool:
         futures = [pool.submit(one, n, s) for n, s in enumerate(todo, 1)]
         for f in as_completed(futures):
+            METER.tick()
             try:
                 d, summary, mark, had_text, lines = f.result()
             except Exception as e:  # noqa: BLE001
@@ -298,6 +322,7 @@ def summarize(stories: list, model: str = TR.DEFAULT_MODEL,
                 if verify:
                     TR.save_cache(ver_path, ver)
             stats["done" if summary else "empty"] += 1
+    TR.save_cache(para_path, para_cache)
     public = {d: v for d, v in cache.items()
               if not v or not verify or ver.get(d) == vkey(v)}
     return public, stats

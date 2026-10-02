@@ -14,3 +14,6 @@ ai-news*.md
 provs/lgbt-news*.json
 provs/lgbt-news*.html
 provs/lgbt-news*.md
+
+# stime di durata per la barra di avanzamento
+meter-history.json

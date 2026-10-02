@@ -20,6 +20,7 @@ from collections import Counter
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from format_news import AREAS, classify, hours
+from meter import METER
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DROP_QS = ("utm_", "fbclid", "gclid", "ref", "cmpid", "smid")
@@ -85,7 +86,9 @@ def serper_news(key: str, q: str, num: int = 10) -> list[dict]:
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return json.loads(r.read()).get("news") or []
+            found = json.loads(r.read()).get("news") or []
+            METER.serper(1, "notizie")
+            return found
     except urllib.error.HTTPError as e:
         print(f"  ! HTTP {e.code} on {q!r}", file=sys.stderr)
     except Exception as e:  # noqa: BLE001

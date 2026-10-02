@@ -25,6 +25,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import urljoin, urlsplit
 
+from meter import METER
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 API = "https://google.serper.dev/images"
 
@@ -69,7 +71,9 @@ def serper_images(key: str, query: str, num: int = 6) -> list:
         headers={"X-API-KEY": key, "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return json.loads(r.read()).get("images") or []
+            found = json.loads(r.read()).get("images") or []
+            METER.serper(1, "immagini")
+            return found
     except urllib.error.HTTPError as e:
         print(f"  ! images HTTP {e.code}: {e.read()[:80]!r}", file=sys.stderr)
     except Exception as e:  # noqa: BLE001

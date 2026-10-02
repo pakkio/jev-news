@@ -27,12 +27,19 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 import collect_news as CN          # noqa: E402
 import format_news as FN           # noqa: E402
+import rate as RATE                # noqa: E402
+from meter import METER            # noqa: E402
 
 OUT = os.path.join(HERE, "lgbt-news")
 
 # L'ordine conta: classify() assegna la prima area che combacia.
 AREAS = [
     dict(key="rights", color="#f4a261",
+         jev={"what": "Law and rights: legislation, court rulings, marriage and family law, legal recognition, "
+                      "government and parliament decisions about LGBT+ people.",
+              "not_for": "Violence or hate crimes, health care, or cultural events.",
+              "examples": ["Supreme Court hears case on trans athletes", "Matrimonio egualitario in Virginia",
+                           "Le Conseil d'État annule la circulaire", "Bundestag beschließt Selbstbestimmungsgesetz"]},
          it=("Diritti, leggi e tribunali",
              "Matrimonio, famiglie, riconoscimento giuridico: cosa cambia per legge."),
          en=("Rights, Law & Courts", "Marriage, families, legal recognition."),
@@ -42,6 +49,11 @@ AREAS = [
              r"unioni civili|sentenza|tribunale|corte|governo|parlamento|senato|camera|"
              r"adozion\w*|riconoscimento|figli)\b"),
     dict(key="safety", color="#f7768e",
+         jev={"what": "Violence, hate crimes, harassment, bullying, discrimination and threats against LGBT+ people, "
+                      "and how institutions and communities respond.",
+              "not_for": "Laws and court rulings, even about discrimination.",
+              "examples": ["Aggressione omofoba a Bologna", "Gay couple attacked in Berlin", "Agression homophobe à Lyon",
+                           "Ataque transfóbico en Madrid"]},
          it=("Violenza, odio e discriminazione",
              "Aggressioni, hate crime, bullismo e le risposte di istituzioni e comunità."),
          en=("Violence, Hate & Discrimination", "Attacks, hate crimes, bullying."),
@@ -50,6 +62,11 @@ AREAS = [
              r"aggress\w*|violenz\w*|odio|omofob\w*|transfob\w*|bullismo|aggredit\w*|"
              r"insult\w*|minacc\w*|omicidio|molest\w*)\b"),
     dict(key="health", color="#7aa2f7",
+         jev={"what": "Health and identity: gender-affirming care, HIV prevention and treatment, mental health, "
+                      "hospitals and clinics, trans lives and transition.",
+              "not_for": "A court ruling about health care (that is law).",
+              "examples": ["Hospital halts care for trans youth", "PrEP e HIV: nuove linee guida",
+                           "Santé mentale des jeunes LGBT", "Atención sanitaria a personas trans"]},
          it=("Salute, identità e persone trans",
              "Cure, percorsi di affermazione di genere, HIV e benessere psicologico."),
          en=("Health, Identity & Trans Lives", "Care, gender-affirming health, HIV."),
@@ -58,6 +75,11 @@ AREAS = [
              r"identity|salute|sanitari\w*|ospedale|identita|identità|genere|"
              r"disforia|ormon\w*|psicolog\w*|persone trans)\b"),
     dict(key="culture", color="#bb9af7",
+         jev={"what": "Culture, media, sport and Pride: parades and festivals, film, television, music, books, "
+                      "athletes and visibility.",
+              "not_for": "Violence at a Pride event (that is safety) or laws about sport participation (that is rights).",
+              "examples": ["Annapolis Pride Parade route", "Corteo del Pride a Udine", "Festival queer à Paris",
+                           "CSD in Köln"]},
          it=("Cultura, media, sport e Pride",
              "Film, serie, musica, atleti e le piazze: la visibilità raccontata."),
          en=("Culture, Media, Sport & Pride", "Film, TV, music, athletes and Pride."),
@@ -66,6 +88,10 @@ AREAS = [
              r"football|calcio|corteo|parata|serie|musica|cantante|attore|attrice|"
              r"libro|romanzo|atleta|sportiv\w*|mostra|teatro|cinema)\b"),
     dict(key="society", color="#9ece6a",
+         jev={"what": "Society, work and community: workplaces, schools, religion and churches, associations, "
+                      "family life and everyday life of LGBT+ people.",
+              "examples": ["Methodist church splits over LGBT policy", "Lesbian bars and community spaces",
+                           "Inclusion at work", "Iglesia y personas LGBT"]},
          it=("Società, lavoro e comunità",
              "Tutto il resto: aziende, scuole, religioni, associazioni e vita quotidiana."),
          en=("Society, Work & Community", "Everything else."),
@@ -86,6 +112,8 @@ QUERIES = {
                 ("LGBT trans lavoro scuola", "it"), ("LGBT church religion", None)],
 }
 
+TOPIC = "LGBT+ people: their rights, safety, health, culture or community"
+
 TEXT_IT = dict(
     kicker="Rassegna · settimana del", title="Rassegna LGBT+",
     sub="{n} storie raccolte da Google News via Serper negli ultimi 7 giorni, "
@@ -104,7 +132,9 @@ def serper_news(key: str, q: str, gl: str, num: int = 10) -> list:
         headers={"X-API-KEY": key, "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return json.loads(r.read()).get("news") or []
+            found = json.loads(r.read()).get("news") or []
+            METER.serper(1, "notizie")
+            return found
     except (urllib.error.URLError, OSError, ValueError) as e:
         print(f"  ! {q!r}: {str(e)[:70]}", file=sys.stderr)
         return []
@@ -197,9 +227,11 @@ def main() -> None:
     n_main, n_more, lang = 4, 6, "it"
 
     # stesso motore, altro tema
+    METER.start("lgbt", {"carico": 3, "aree": 20, "cluster": 1, "fusioni": 60, "valutazione": 15, "fili": 150,
+                         "immagini": 40, "traduzione": 20, "riassunti": 300, "pagina": 15})
+    METER.stage("carico")
     FN.AREAS[:] = AREAS
     FN.MIN_SHARED_IDF = 7.0      # two shared words must carry real information
-    FN.USE_BOOST = False         # the ranking lexicon is English tech/finance: not used here
     FN.MERGE_SWEEP = True        # rejoin clusters that converged after the greedy pass
     FN.UI[lang].update(TEXT_IT)
 
@@ -215,15 +247,19 @@ def main() -> None:
         print(f"  scartata ({why}): {title[:70]}")
     for it in raw:
         it["area"], it["color"] = FN.classify(it["title"], it["snippet"])
+    METER.stage("aree")
+    FN.jev_classify(raw, OUT)
     raw.sort(key=lambda x: FN.hours(x["date"]))
     json.dump(raw, open(f"{OUT}.json", "w"), indent=1, ensure_ascii=False)
 
+    METER.stage("cluster")
     clusters = FN.cluster(raw, 0.62)
     print(f"  cluster per parole: {len(clusters)}")
-    merged = FN.llm_merge(clusters, cache_path=f"{OUT}.mrg.json")
-    print(f"  unite per parafrasi: {merged} -> {len(clusters)} eventi")
+    FN.jev_judge(clusters, OUT, TOPIC)    # same-event merging, rating, piece type, relevance: Jev
+    print(f"  eventi: {len(clusters)}")
     for n, c in enumerate(clusters):
         c["sid"] = f"s{n}"
+    METER.stage("fili")
     threads = (FN.find_threads_llm(clusters, cache_path=f"{OUT}.thr2.json")
                or FN.find_threads(clusters))
     rows = [(c, kind) for _, _, main_rows, more, _ in
@@ -233,6 +269,7 @@ def main() -> None:
     shown += [c for th in threads for c in th["members"] if c not in shown]
     featured = [c for c, k in rows if k == "main"]
 
+    METER.stage("immagini")
     if do_img:
         import images as IMG
         print("  immagini per le storie in evidenza...")
@@ -256,6 +293,7 @@ def main() -> None:
         n_emb, n_bytes = IMG.embed(featured, [c for c, k in rows if k == "more"], f"{OUT}.img.json")
         print(f"  foto incorporate nell'HTML: {n_emb} ({n_bytes // 1024} KB)")
 
+    METER.stage("traduzione")
     import translate as TR
     print("  traduzione...")
     cache, st = TR.translate([{"title": c["title"], "snippet": c["snippet"]}
@@ -266,6 +304,7 @@ def main() -> None:
             c["title_it"], c["snippet_it"] = row["title"], row["snippet"]
     print(f"  tradotte {st['translated']}, cache {st['cached']}, fallite {st['failed']}")
 
+    METER.stage("riassunti")
     if do_sum:
         import summarize as SM
         print("  riassunti degli articoli...")
@@ -314,6 +353,7 @@ def main() -> None:
     now = datetime.now()
     generated = f"{now.day} {FN.MESI_IT[now.month - 1]} {now.year}"
 
+    METER.stage("pagina")
     open(f"{OUT}.html", "w").write(FN.render_html(
         clusters, meta, lang, None, generated, n_main, n_more,
         hero="off", images="all" if do_img else "off", threads=threads))
@@ -321,6 +361,7 @@ def main() -> None:
         clusters, meta, lang, generated, None, n_main, n_more))
     print(f"\n  {len(raw)} storie -> {len(clusters)} eventi unici, aree: "
           f"{dict(per_area)}\n  scritto {OUT}.html")
+    METER.finish()
 
 
 if __name__ == "__main__":
