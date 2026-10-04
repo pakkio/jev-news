@@ -209,6 +209,14 @@ summaries, threads); code does the arithmetic.
 `uv run embed_html.py provs/x.html` inlines the hotlinked photos (720px lead cards,
 120px the rest), so the page works as a single file. Cached in `<page>.img.data.json`.
 
+### `labels.py` and `diff_runs.py` — checking Jev
+
+A run writes `provs/<slug>.labels.csv`, a sample to label by hand. `uv run labels.py
+provs/x.labels.csv` gives the agreement with Jev per question; `--rerun` asks Jev again with
+the current questions of `rate.py`, to measure a change. `uv run diff_runs.py provs/old.html
+provs/new.html` marks on the new page the stories whose impact, piece type or place changed
+(Δ), and lists those that came in or dropped out.
+
 ### `demo.py` — Tavily search demo
 
 Minimal example of querying the [Tavily](https://tavily.com) search API.

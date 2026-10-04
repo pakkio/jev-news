@@ -1,0 +1,168 @@
+{
+ "title": "AI 3 days: Rassegna Settimanale",
+ "kicker": "Rassegna · settimana del",
+ "sub": "Ecco {n} storie selezionate sull'intelligenza artificiale, raccolte {window}.",
+ "topic": "Artificial Intelligence: new models, company news, regulation or market impact",
+ "areas": [
+  {
+   "key": "modelli_e_lanci",
+   "what": "Announces of new models, software updates, new AI features released on existing platforms.",
+   "not_for": "Hardware news or unrelated technology trends.",
+   "examples": [
+    "OpenAI releases GPT-4 Turbo with 1 million context window",
+    "L'azienda italiana lancia il primo modello AI su larga scala",
+    "Google unveils new Gemini update for Android users",
+    "Nova ferramenta de IA permite editar vídeos com um clique"
+   ],
+   "name": "Modelli e Prodotti",
+   "note": "Raccolta di novità tecniche sui nuovi modelli e aggiornamenti software.",
+   "pat": "\\b(modelli|modello|new model|release|launch|aggiornamento|update|GPT|Gemini|Claude|Llama|Sora)\\b",
+   "queries": [
+    [
+     "new AI model release news 2024",
+     null
+    ],
+    [
+     "nuovo modello intelligenza artificiale lancio",
+     "it"
+    ],
+    [
+     "OpenAI Google Microsoft AI update",
+     null
+    ],
+    [
+     "aggiornamenti software AI rilasciati",
+     "it"
+    ]
+   ]
+  },
+  {
+   "key": "aziende_e_mercato",
+   "what": "Financial news, mergers, acquisitions, stock prices, corporate strategy related to the AI sector.",
+   "not_for": "Product announcements or technical specifications.",
+   "examples": [
+    "NVIDIA shares hit record high after AI chip demand surge",
+    "Microsoft investe 10 miliardi in startup di intelligenza artificiale",
+    "Tech giant merger under review by EU competition authorities",
+    "Acordo entre gigantes da tecnologia cria nova joint venture"
+   ],
+   "name": "Aziende e Mercato",
+   "note": "Cronaca finanziaria, strategica e organizzativa delle grandi aziende tech e AI.",
+   "pat": "\\b(azioni|stock|mercato|borsa|investimento|investire|acquisizione|fusione|profitto|profit|CEO|valutazione)\\b",
+   "queries": [
+    [
+     "AI companies stock market earnings",
+     null
+    ],
+    [
+     "aziende intelligenza artificiale borsa investimenti",
+     "it"
+    ],
+    [
+     "AI merger acquisition financial news",
+     null
+    ],
+    [
+     "capitalizzazione mercati tech AI",
+     "it"
+    ]
+   ]
+  },
+  {
+   "key": "normativa_ed_etica",
+   "what": "Legislation, risks, bias, safety, job impact and ethical questions.",
+   "not_for": "Marketing material or commercial product launches.",
+   "examples": [
+    "EU AI Act passes final vote amid privacy concerns",
+    "Giudice blocca uso dell'IA nella selezione del personale",
+    "New study reveals algorithmic bias in healthcare systems",
+    "Protesta global por direitos autorais de obras de IA"
+   ],
+   "name": "Normativa, Etica e Impatto",
+   "note": "Analisi su leggi, sicurezza, rischi etici e conseguenze sociali del lavoro.",
+   "pat": "\\b(regolamento|legge|legislazione|bias|sicurezza|sicuro|etica|lavoro|disoccupazione|rischio|normativa|giudice)\\b",
+   "queries": [
+    [
+     "EU AI Act regulation compliance news",
+     null
+    ],
+    [
+     "normativa intelligenza artificiale europa legge",
+     "it"
+    ],
+    [
+     "AI ethics bias safety risks jobs",
+     null
+    ],
+    [
+     "etica e impatto sociale intelligenza artificiale",
+     "it"
+    ]
+   ]
+  },
+  {
+   "key": "strumenti_e_tutorial",
+   "what": "Practical guides, professional use of AI tools, open source community, daily use cases.",
+   "not_for": "Scientific papers or broad regulatory news.",
+   "examples": [
+    "How to build an AI workflow with Python in 2024",
+    "I migliori plugin gratuiti per l'intelligenza artificiale",
+    "GitHub trending repositories for machine learning this week",
+    "Tutoriales de IA para pequeñas empresas en español"
+   ],
+   "name": "Strumenti, Tutorial e Uso Pratico",
+   "note": "Utilità pratica, guide e community per chi usa l'AI giornalmente.",
+   "pat": "\\b(strumenti|tool|tutorial|guida|come usare|prompt|workflow|open source|integrazione)\\b",
+   "queries": [
+    [
+     "best AI tools tutorial how to use",
+     null
+    ],
+    [
+     "migliori tool intelligenza artificiale utili guide",
+     "it"
+    ],
+    [
+     "prompt engineering workflow automation guide",
+     null
+    ],
+    [
+     "guida pratica intelligenza artificiale lavoro",
+     "it"
+    ]
+   ]
+  },
+  {
+   "key": "altro",
+   "what": "All AI news that does not fit into the areas listed above.",
+   "not_for": "",
+   "examples": [
+    "Scientific discovery accelerated by machine learning models",
+    "Curiosità: l'AI interpreta i sogni degli utenti",
+    "Historical archive digitized using artificial intelligence",
+    "Entrevista com especialista em IA sobre futuro do trabalho"
+   ],
+   "name": "Altre Notizie AI",
+   "note": "Cronaca generale AI non classificabile nelle aree specifiche.",
+   "pat": ".*",
+   "queries": [
+    [
+     "artificial intelligence news weekly",
+     null
+    ],
+    [
+     "notizie intelligenza artificiale oggi",
+     "it"
+    ],
+    [
+     "AI science research discovery journal",
+     null
+    ],
+    [
+     "ricerca scienza intelligenza artificiale",
+     "it"
+    ]
+   ]
+  }
+ ]
+}
