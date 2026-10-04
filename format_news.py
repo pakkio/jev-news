@@ -284,6 +284,7 @@ HEROES = {
 }
 DEFAULT_HERO = "earth"
 EMBED_IMAGES = True      # inline the pictures so the page does not depend on 40 CDNs
+COST = None             # {"jev","serper","total","pieces",...} set by the caller (costs.attach)
 CURRENT_LANG = "it"      # language of the page being rendered (set by render_html)
 FAVICON = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
            "viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' "
@@ -719,6 +720,19 @@ def jev_classify(raw: list, prefix: str, quiet: bool = False) -> None:
         print(f"  aree con Jev non disponibili ({str(e)[:60]}): resto sulle regex")
 
 
+DEEP_PER_AREA = 20       # stories per area that get the full rating; the page shows ~10
+
+
+def deep_candidates(clusters: list) -> list:
+    """The stories worth the full (expensive) Jev rating: the top DEEP_PER_AREA of each
+    area by what is known before it, freshness, sources and snippet."""
+    out = []
+    for a in AREAS:
+        rows = sorted((c for c in clusters if c["area"] == a["key"]), key=score, reverse=True)
+        out += rows[:DEEP_PER_AREA]
+    return out
+
+
 def jev_judge(clusters: list, prefix: str, topic: str) -> list:
     """Same-event merging, editorial rating, piece type and relevance, all by Jev.
     Removes what is plainly not about the topic or not an article, and returns it."""
@@ -730,9 +744,12 @@ def jev_judge(clusters: list, prefix: str, topic: str) -> list:
               f"({st['pairs']} coppie, {st['auto']} sicure, {st['unsure']} incerte, {st['llm_yes']} confermate)")
     except (SystemExit, Exception) as e:  # noqa: BLE001
         print(f"  fusioni con Jev non disponibili ({str(e)[:60]}): resto sul confronto di parole")
+    METER.stage("aree")          # after merging: one area question per event, not per headline
+    jev_classify(clusters, prefix, quiet=True)
     METER.stage("valutazione")
     try:
-        RATE.rate(clusters, cache_path=f"{prefix}.jev.json", topic=topic)
+        RATE.rate(clusters, cache_path=f"{prefix}.jev.json", topic=topic,
+                  deep=deep_candidates, rel_min=REL_DROP)
     except (SystemExit, Exception) as e:  # noqa: BLE001
         print(f"  valutazione Jev non disponibile ({str(e)[:60]}): ordine senza valutazione di contenuto")
     out = []
@@ -833,7 +850,7 @@ def find_threads_llm(clusters: list, model: str = None, cache_path: str = None,
         for c in t["members"]:
             c["thread"] = n
         if not quiet:
-            print(f"  filo [{t['kind']}] {t['title']}: " +
+            print(f"  thread [{t['kind']}] {t['title']}: " +
                   " | ".join(c["title"][:34] for c in t["members"]))
     return threads
 
@@ -1134,6 +1151,10 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
         edition_html = "<br>" + esc(t["edition"].format(
             mins=max(1, round(m["seconds"] / 60)), jev=f"{m['jev']:.4f}", n=m["serper_credits"],
             serper=f"{m['serper_usd']:.3f}", total=f"{m['total']:.3f}"))
+    if COST:                                       # estimated cost of every piece, summed
+        edition_html += ("<br>" + esc(f"Costo stimato: {COST['pieces']} pezzi · Jev ${COST['jev']:.4f} · "
+                         f"Serper {COST['serper_credits']:.0f} crediti (${COST['serper']:.3f}) · "
+                         f"LLM $0 · totale ${COST['total']:.4f}"))
     stories_json = json.dumps(payload).replace("</", "<\\/")
     why_ui = json.dumps({k: t[k] for k in t if k.startswith("why_")}).replace("</", "<\\/")
 
@@ -1336,6 +1357,7 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
             color:#e6e8ef; border:1px solid color-mix(in srgb,var(--c) 45%, transparent);
             background:color-mix(in srgb,var(--c) 14%, transparent); white-space:nowrap; }}
   .badge b {{ color:#fff; font-weight:700; }}
+  .badge.cost {{ color:#7fd6a4; border-color:rgba(127,214,164,.3); background:transparent; cursor:help; }}
   .badge.score {{ color:var(--mute); border-color:rgba(255,255,255,.14); background:transparent; cursor:help; }}
   .thumb {{
     position:relative; margin:-22px -22px 16px; aspect-ratio:16/9; overflow:hidden;
@@ -1661,6 +1683,14 @@ def why_data(c: dict, lang: str, role: tuple, t: dict) -> dict:
             "rel": round(c["relevance"], 2) if c.get("relevance") is not None else None}
 
 
+def cost_chip(c: dict) -> str:
+    """Estimated cost of the piece (Jev questions + its share of the Serper searches)."""
+    if c.get("cost") is None:
+        return ""
+    return (f'<span class="badge cost" title="Costo stimato del pezzo: domande a Jev + quota delle ricerche Serper">'
+            f'${c["cost"]:.4f}</span>')
+
+
 def ptype_chip(c: dict) -> str:
     """A small label for anything that is not plain reporting (opinion, press release, ...)."""
     pt = c.get("ptype")
@@ -1694,6 +1724,7 @@ def spot_html(c: dict, color: str, lang: str, t: dict) -> str:
               <footer>
                 {chip}
                 <span class="badge score" title="{esc(t['score_tip'])}">&#9733; {round(score(c))}</span>
+                {cost_chip(c)}
                 {ptype_chip(c)}
                 {why_button(c, t)}
                 <button type="button" class="go" data-sid="{esc(c.get('sid', ''))}" title="{esc(t['flip_tip'])}"><span class="cyc" aria-hidden="true">&#8635;</span> {esc(t['read'])}</button>
@@ -1732,6 +1763,7 @@ def card_html(c, lang, featured=False, t=None, image=True) -> str:
           {f'<span class="solo">{esc(t["unverified" if c.get("penalty") else "single"])}</span>' if len(src) == 1 else ''}
           {f'<span class="badge"><b>{len(src)}</b> {esc(t["sources"])}</span>' if len(src) > 1 else ''}
           <span class="badge score" title="{esc(t['score_tip'])}">&#9733; {round(score(c))}</span>
+          {cost_chip(c)}
           {ptype_chip(c)}
           {why_button(c, t)}
           <button type="button" class="go" data-sid="{esc(c.get('sid', ''))}" title="{esc(t['flip_tip'])}"><span class="cyc" aria-hidden="true">&#8635;</span> {esc(t['read'])}</button>
@@ -1765,6 +1797,7 @@ def brief_html(c, lang, t=None, image=True) -> str:
               <span class="b-src">{esc(first['name'])} &middot; {esc(fmt_date(c['date'], lang))}</span>
               {chip}
               <span class="badge score" title="{esc(t['score_tip'])}">&#9733; {round(score(c))}</span>
+              {cost_chip(c)}
               {ptype_chip(c)}
               {why_button(c, t, small=True)}
             </span>
@@ -1906,8 +1939,7 @@ def main() -> None:
     prefix = os.path.join(HERE, "ai-news")
     if do_jev:
         METER.stage("aree")
-        jev_classify(raw, prefix)
-    raw.sort(key=lambda x: hours(x["date"]))
+        raw.sort(key=lambda x: hours(x["date"]))
 
     METER.stage("cluster")
     clusters = cluster(raw, min_sim)

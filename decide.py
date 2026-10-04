@@ -82,26 +82,24 @@ def classify_areas(items: list, areas: list, cache_path: str = None, workers: in
 
 
 # ------------------------------------------------------------ same event -----
-PAIR_VERSION = "p1"
+PAIR_VERSION = "p2"
 AUTO_P = 0.80          # Jev alone merges above this
 UNSURE_P = 0.30        # between UNSURE_P and AUTO_P a generative model is asked, once, about all of them
 
-SAME_YES = {"what": "Both describe one and the same occurrence, even from a different angle, in different words "
-                    "or in a different language.",
-            "examples": ["Court tosses lawsuit / Giudice respinge la causa",
-                         "Another assault on a man in via San Felice / Un ragazzo picchiato in via San Felice"]}
-SAME_NO = {"what": "Different occurrences: the same kind of event in a different place, on a different day or "
-                   "with different victims; or the same topic, company or people with a different development.",
-           "not_for": "Two reports of the same occurrence.",
-           "examples": ["An attack in Bologna on Tuesday vs another attack in Bologna on Friday",
-                        "A lawsuit against company X vs a new product from company X"]}
+# Leaner than the criteria Jev would like (one contrastive example each, short wording): they
+# are repeated for every candidate in a request, so each character is paid up to 10 times.
+SAME_YES = {"what": "One and the same occurrence, even from another angle, in other words or another language.",
+            "examples": ["Court tosses lawsuit / Giudice respinge la causa"]}
+SAME_NO = {"what": "Different occurrences: same kind of event on another day, place or with other victims; "
+                   "or same topic or company with a different development.",
+           "examples": ["An attack in Bologna on Tuesday vs another on Friday"]}
 
 
 def _card(c: dict) -> dict:
     return {"headline": c["title"], "snippet": (c.get("snippet") or "")[:300]}
 
 
-def candidate_pairs(clusters: list, max_gap_h: float = 120, max_per: int = 40) -> list:
+def candidate_pairs(clusters: list, max_gap_h: float = 120, max_per: int = 15) -> list:
     """Pairs worth asking about: published within five days of each other and sharing a
     name or two words. Cheap and permissive; Jev does the judging."""
     import format_news as FN

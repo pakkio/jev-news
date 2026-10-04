@@ -15,5 +15,11 @@ provs/lgbt-news*.json
 provs/lgbt-news*.html
 provs/lgbt-news*.md
 
+# rassegne generate da news.py
+provs/*.html
+provs/*.md
+provs/*.json
+!provs/*.spec.json
+
 # stime di durata per la barra di avanzamento
 meter-history.json

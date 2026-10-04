@@ -38,6 +38,13 @@ MAX_CHARS = 9000         # enough article for a summary, cheap to send
 
 # A fast model gives up on pages that are mostly menu, and the checker should be
 # stronger than the writer: both use this one.
+# The writer. Jev used to filter the page furniture out of every article paragraph by
+# paragraph, which was most of the Jev bill (each paragraph carried the full criteria);
+# the prompt already tells the model to ignore menus and answer NONE for a non-article,
+# so the default is the cheap heuristic (body_only). SUMMARY_PROSE=jev brings Jev back.
+SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "opencodego:deepseek-v4-flash")
+SUMMARY_PROSE = os.environ.get("SUMMARY_PROSE", "heuristic")
+
 STRONG = os.environ.get("LLM_MODEL_STRONG", "opencodego:deepseek-v4-pro")
 
 PROMPT = """\
@@ -244,7 +251,7 @@ def vet(key: str, title: str, text: str, summary: str, quiet: bool, log=print):
     return ""
 
 
-def summarize(stories: list, model: str = TR.DEFAULT_MODEL,
+def summarize(stories: list, model: str = SUMMARY_MODEL,
               cache_path: str = None, quiet: bool = False, verify: bool = True) -> tuple:
     """stories: [{"title":..., "links":[...]}] -> (verified cache, stats).
 
@@ -256,7 +263,7 @@ def summarize(stories: list, model: str = TR.DEFAULT_MODEL,
     ver_path = cache_path.replace(".json", ".ver.json")
     cache, ver = TR.load_cache(cache_path), TR.load_cache(ver_path)
     para_path = cache_path.replace(".json", ".para.json")
-    para_cache = TR.load_cache(para_path)
+    para_cache = TR.load_cache(para_path) if SUMMARY_PROSE == "jev" else None
 
     todo = []
     for s in stories:
@@ -322,7 +329,8 @@ def summarize(stories: list, model: str = TR.DEFAULT_MODEL,
                 if verify:
                     TR.save_cache(ver_path, ver)
             stats["done" if summary else "empty"] += 1
-    TR.save_cache(para_path, para_cache)
+    if para_cache is not None:
+        TR.save_cache(para_path, para_cache)
     public = {d: v for d, v in cache.items()
               if not v or not verify or ver.get(d) == vkey(v)}
     return public, stats

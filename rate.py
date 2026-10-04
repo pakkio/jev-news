@@ -178,47 +178,88 @@ def points(r: dict) -> float:
     return sum(breakdown(r).values())
 
 
+def _state(c: dict) -> dict:
+    return {"headline": c["title"], "snippet": (c.get("snippet") or "")[:500],
+            "url": c["sources"][0]["link"][:200] if c.get("sources") else ""}
+
+
 def rate(clusters: list, cache_path: str = None, topic: str = "artificial intelligence",
-         workers: int = 4, quiet: bool = False) -> dict:
+         workers: int = 4, quiet: bool = False, deep=None, rel_min: float = 0.0) -> dict:
     """Sets c["jev"] (five 0-1 values), c["ptype"] and c["relevance"] on every cluster that
-    could be rated. Returns {"new": n, "cached": n, "failed": n}."""
+    could be rated. Returns {"new": n, "cached": n, "failed": n, "light": n}.
+
+    Jev bills input tokens and the questions are 94% of them, so asking all six of every
+    story is the expensive path. With `deep`, a callable(clusters) -> the clusters worth a
+    full rating, every uncached story first gets only the relevance question (about a
+    twelfth of the tokens); the other five go to the stories `deep` picks among those with
+    relevance >= rel_min. The rest keep relevance and are ranked by freshness and sources."""
     cache_path = cache_path or os.path.join(HERE, "ai-news.jev.json")
     cache = J.load_cache(cache_path)
-    stats = {"new": 0, "cached": 0, "failed": 0}
+    stats = {"new": 0, "cached": 0, "failed": 0, "light": 0}
     todo = []
 
     def put(c, e):
         c["jev"], c["ptype"], c["relevance"] = e["v"], e["type"], e["rel"]
 
-    for c in clusters:
+    def digests(c):
         d = J.digest(VERSION, topic, c["title"], c.get("snippet", ""))
+        return d, "r" + d
+
+    for c in clusters:
+        d, dr = digests(c)
         if d in cache:
             put(c, cache[d])
             stats["cached"] += 1
         else:
             todo.append((d, c))
+    key = qs = None
     if todo:
         key = J.load_key()
         qs = questions(topic)
 
-        def one(item):
-            d, c = item
-            ans = J.call(key, {"headline": c["title"], "snippet": (c.get("snippet") or "")[:500],
-                               "url": c["sources"][0]["link"][:200] if c.get("sources") else ""}, qs)
-            return d, c, normalise(ans) if ans else None
-
-        METER.set_total(len(todo))
+    def run(items, asked, handle):
+        METER.set_total(len(items))
         with ThreadPoolExecutor(workers) as pool:
-            for d, c, e in pool.map(one, todo):
+            for item, ans in pool.map(lambda it: (it, J.call(key, _state(it[1]), asked)), items):
                 METER.tick()
-                if e is None:
-                    stats["failed"] += 1
-                    continue
-                cache[d] = e
-                put(c, e)
-                stats["new"] += 1
+                handle(item, ans)
+
+    if todo and deep:
+        only = {"relevant": qs["relevant"]}
+
+        def light(item, ans):
+            d, c = item
+            if not ans:
+                return
+            cache["r" + d] = c["relevance"] = ans["relevant"]["noul"]
+            stats["light"] += 1
+
+        ask = []
+        for d, c in todo:
+            if "r" + d in cache:
+                c["relevance"] = cache["r" + d]
+            else:
+                ask.append((d, c))
+        run(ask, only, light)
+        pool = [c for c in clusters if (c.get("relevance") is None or c["relevance"] >= rel_min)]
+        picked = {id(c) for c in deep(pool)}
+        todo = [(d, c) for d, c in todo if id(c) in picked]
+
+    def full(item, ans):
+        d, c = item
+        e = normalise(ans) if ans else None
+        if e is None:
+            stats["failed"] += 1
+            return
+        cache[d] = e
+        put(c, e)
+        stats["new"] += 1
+
+    if todo:
+        run(todo, qs, full)
+    if key:
         J.save_cache(cache_path, cache)
     if not quiet:
-        print(f"  valutazione Jev: nuove {stats['new']}, in cache {stats['cached']}, "
-              f"fallite {stats['failed']}")
+        print(f"  valutazione Jev: complete {stats['new']}, in cache {stats['cached']}, "
+              f"solo pertinenza {stats['light']}, fallite {stats['failed']}")
     return stats

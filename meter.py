@@ -52,6 +52,7 @@ class Meter:
         self.total = 0
         self.count = 0
         self.jev_in = self.jev_out = self.jev_calls = 0
+        self.jev_by = {}            # stage -> [requests, input tokens]
         self.llm_in = self.llm_out = self.llm_calls = 0
         self.serper_credits = 0
         self.serper_kinds = {}
@@ -103,7 +104,10 @@ class Meter:
     def jev(self, usage) -> None:
         with self.lock:
             self.jev_calls += 1
+            row = self.jev_by.setdefault(self.cur or "-", [0, 0])
+            row[0] += 1
             if usage:
+                row[1] += usage.get("input_tokens", 0)
                 self.jev_in += usage.get("input_tokens", 0)
                 self.jev_out += usage.get("output_tokens", 0)
 
@@ -195,6 +199,10 @@ class Meter:
               f"{self.jev_in:,} token in -> ${c['jev']:.4f} | Serper {self.serper_credits} crediti "
               f"{dict(self.serper_kinds) or ''} (~${c['serper']:.3f}) | LLM {self.llm_calls} richieste, "
               f"{self.llm_in + self.llm_out:,} token (${c['llm']:.4f}) | totale ~${c['total']:.3f}", flush=True)
+        if self.jev_by:
+            parts = ", ".join(f"{k} {n} ric/{t // 1000}k tok (${t / 1e6 * JEV_IN:.4f})"
+                              for k, (n, t) in sorted(self.jev_by.items(), key=lambda kv: -kv[1][1]))
+            print(f"  Jev per fase: {parts}", flush=True)
 
 
 METER = Meter()

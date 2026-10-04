@@ -6,8 +6,11 @@ sostituendo solo le aree tematiche e i testi. Tutti i file prodotti (e le
 cache) stanno qui in provs/ con prefisso lgbt-news.
 
 Usage:
-  python3 provs/lgbt_news.py [--max-credits 30] [--reuse] [--no-summaries] [--no-images]
+  python3 provs/lgbt_news.py [--days 7] [--lang it] [--max-credits 30] [--reuse] [--no-summaries] [--no-images]
                              [--corroborate]
+
+--days N limits the search to the last N days (default 7; 1 -> qdr:d, 7 -> qdr:w,
+30 -> qdr:m, anything else -> qdr:dN).
 
 --corroborate spends Serper credits (1 per main card that rests on a single
 unreadable source, at most 6) to look for a second outlet. Off by default: without
@@ -112,18 +115,23 @@ QUERIES = {
                 ("LGBT trans lavoro scuola", "it"), ("LGBT church religion", None)],
 }
 
+DAYS = 7
+TBS = {1: "qdr:d", 7: "qdr:w", 30: "qdr:m"}
+
+METER_NAME = "lgbt"
 TOPIC = "LGBT+ people: their rights, safety, health, culture or community"
 
+TEXT_EN = None      # set by news.py for lang=en; None -> keep the page's English defaults
 TEXT_IT = dict(
     kicker="Rassegna · settimana del", title="Rassegna LGBT+",
-    sub="{n} storie raccolte da Google News via Serper negli ultimi 7 giorni, "
+    sub="{n} storie raccolte da Google News via Serper {window}, "
         "internazionali e italiane. Raggruppate per area e deduplicate: quando più "
         "testate coprono lo stesso evento diventano una sola scheda con più fonti.",
 )
 
 
 def serper_news(key: str, q: str, gl: str, num: int = 10) -> list:
-    body = {"q": q, "num": num, "tbs": "qdr:w"}
+    body = {"q": q, "num": num, "tbs": TBS.get(DAYS, f"qdr:d{DAYS}")}
     if gl:
         # hl=en tiene le date in "N days ago", l'unico formato che hours() legge
         body.update(gl=gl, hl="en")
@@ -224,16 +232,27 @@ def main() -> None:
     max_credits = int(argv[argv.index("--max-credits") + 1]) if "--max-credits" in argv else 30
     do_sum, do_img = "--no-summaries" not in argv, "--no-images" not in argv
     do_corr = "--corroborate" in argv
-    n_main, n_more, lang = 4, 6, "it"
+    global DAYS
+    if "--days" in argv:
+        DAYS = int(argv[argv.index("--days") + 1])
+        if DAYS < 1:
+            raise SystemExit("--days must be >= 1")
+    n_main, n_more = 4, 6
+    lang = argv[argv.index("--lang") + 1] if "--lang" in argv else "it"
 
     # stesso motore, altro tema
-    METER.start("lgbt", {"carico": 3, "aree": 20, "cluster": 1, "fusioni": 60, "valutazione": 15, "fili": 150,
+    METER.start(METER_NAME, {"carico": 3, "aree": 20, "cluster": 1, "fusioni": 60, "valutazione": 15, "threads": 150,
                          "immagini": 40, "traduzione": 20, "riassunti": 300, "pagina": 15})
     METER.stage("carico")
     FN.AREAS[:] = AREAS
     FN.MIN_SHARED_IDF = 7.0      # two shared words must carry real information
     FN.MERGE_SWEEP = True        # rejoin clusters that converged after the greedy pass
-    FN.UI[lang].update(TEXT_IT)
+    text = TEXT_IT if lang == "it" else TEXT_EN
+    if text:
+        FN.UI[lang].update(text)
+        win = ("nell'ultimo giorno" if DAYS == 1 else f"negli ultimi {DAYS} giorni") if lang == "it" \
+            else ("in the last day" if DAYS == 1 else f"in the last {DAYS} days")
+        FN.UI[lang]["sub"] = text["sub"].replace("{window}", win)
 
     if "--reuse" in argv and os.path.exists(f"{OUT}.json"):
         raw = json.load(open(f"{OUT}.json"))       # nessun credito Serper per le news
@@ -248,7 +267,6 @@ def main() -> None:
     for it in raw:
         it["area"], it["color"] = FN.classify(it["title"], it["snippet"])
     METER.stage("aree")
-    FN.jev_classify(raw, OUT)
     raw.sort(key=lambda x: FN.hours(x["date"]))
     json.dump(raw, open(f"{OUT}.json", "w"), indent=1, ensure_ascii=False)
 
@@ -259,7 +277,7 @@ def main() -> None:
     print(f"  eventi: {len(clusters)}")
     for n, c in enumerate(clusters):
         c["sid"] = f"s{n}"
-    METER.stage("fili")
+    METER.stage("threads")
     threads = (FN.find_threads_llm(clusters, cache_path=f"{OUT}.thr2.json")
                or FN.find_threads(clusters))
     rows = [(c, kind) for _, _, main_rows, more, _ in
@@ -273,13 +291,21 @@ def main() -> None:
     if do_img:
         import images as IMG
         print("  immagini per le storie in evidenza...")
-        cache, st = IMG.fetch([c["title"] for c in featured], lang=lang,
+        # the article's own header photo (og:image) is free; Serper Images (1 credit per card)
+        # is only asked for the cards whose article has none
+        cache = IMG.load_cache(f"{OUT}.img.json")
+        n_free = IMG.upgrade(featured, cache, f"{OUT}.img.json")
+        need = [c for c in featured if not c.get("img")]
+        print(f"  foto dall'articolo (og:image): {n_free}; da cercare con Serper: {len(need)}")
+        cache, st = IMG.fetch([c["title"] for c in need], lang=lang,
                               cache_path=f"{OUT}.img.json",
                               aliases={c["title"]: [m["title"] for m in c["members"]]
-                                       for c in featured},
+                                       for c in need},
                               want={c["title"]: [s["link"] for s in c["sources"]]
-                                    for c in featured})
+                                    for c in need})
         for c in clusters:
+            if c.get("img"):
+                continue                     # og:image already found
             row = IMG.lookup(cache, c["title"])
             if row and not IMG.same_publisher(row, [s["link"] for s in c["sources"]]):
                 row = {}                     # lookalike from another site: not trusted
@@ -295,14 +321,15 @@ def main() -> None:
 
     METER.stage("traduzione")
     import translate as TR
-    print("  traduzione...")
-    cache, st = TR.translate([{"title": c["title"], "snippet": c["snippet"]}
-                              for c in clusters], cache_path=f"{OUT}.it.json")
-    for c in clusters:
-        row = TR.lookup(cache, c["title"], c["snippet"])
-        if row:
-            c["title_it"], c["snippet_it"] = row["title"], row["snippet"]
-    print(f"  tradotte {st['translated']}, cache {st['cached']}, fallite {st['failed']}")
+    if lang == "it":
+        print("  traduzione...")
+        cache, st = TR.translate([{"title": c["title"], "snippet": c["snippet"]}
+                                  for c in clusters], cache_path=f"{OUT}.it.json")
+        for c in clusters:
+            row = TR.lookup(cache, c["title"], c["snippet"])
+            if row:
+                c["title_it"], c["snippet_it"] = row["title"], row["snippet"]
+        print(f"  tradotte {st['translated']}, cache {st['cached']}, fallite {st['failed']}")
 
     METER.stage("riassunti")
     if do_sum:
@@ -341,7 +368,7 @@ def main() -> None:
                 if len(c["sources"]) == 1 and not c.get("summary"):
                     c["penalty"] = 40            # unconfirmed: leaves the main cards
     FN.label_threads(threads, cache_path=f"{OUT}.thr.json")
-    print(f"  fili: {[(th['area'], len(th['members']), th.get('title')) for th in threads]}")
+    print(f"  threads: {[(th['area'], len(th['members']), th.get('title')) for th in threads]}")
 
     per_area = Counter(c["area"] for c in clusters)
     live = [v for v in per_area.values() if v]
@@ -354,6 +381,9 @@ def main() -> None:
     generated = f"{now.day} {FN.MESI_IT[now.month - 1]} {now.year}"
 
     METER.stage("pagina")
+    import costs
+    credits = METER.serper_credits or min(max_credits, sum(len(v) for v in QUERIES.values()))
+    FN.COST = costs.attach(clusters, AREAS, TOPIC, credits)     # estimate per piece + total
     open(f"{OUT}.html", "w").write(FN.render_html(
         clusters, meta, lang, None, generated, n_main, n_more,
         hero="off", images="all" if do_img else "off", threads=threads))
