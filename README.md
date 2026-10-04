@@ -1,6 +1,7 @@
 # search
 
-Small CLI scripts for web search via third-party APIs.
+Small CLI scripts for web search via third-party APIs, and a Jev-based news digest
+built on top of them.
 
 ## Scripts
 
@@ -36,7 +37,7 @@ python3 collect_news.py --target 20        # 20 stories per area
 python3 collect_news.py --target 25 --max-credits 60
 ```
 
-Writes `ai-news.json`, and prints a per-area count with `OK`/`LOW` so an
+Writes `ai-news.json` (the default of `format_news.py`; `news.py` topics use `provs/<slug>.json`), and prints a per-area count with `OK`/`LOW` so an
 unbalanced run is visible immediately.
 
 ### `format_news.py` — digest renderer
@@ -57,7 +58,7 @@ python3 format_news.py --lang it --intro "..." [--main 4] [--more 6] [--folded]
 | `--sim F` | same-event merge threshold (default 0.62) |
 | `--folded` | list every merge, with its folded titles - check the clustering |
 | `--translate` | translate titles and snippets into Italian (see below) |
-| `--model M` | model used for translation (default `openai/gpt-4o-mini`) |
+| `--model M` | model for translation, summaries and threads (default `$LLM_MODEL`, else `openrouter/free`; `opencodego:<model>` uses OpenCode Go, key `OPENCODEGO_API_KEY`) |
 | `--hero N` | banner image: `earth` (default), `circuit`, `code`, `robot`, `laptop`, `off`, or any URL |
 | `--images M` | story images: `all` (default), `main` (lead cards only), `off` |
 
@@ -147,8 +148,8 @@ real `og:image` from each article would fix that, but that means fetching
 every article - outside the Serper + Jina chain you asked to stay inside.
 
 The page chrome is Italian out of the box; headlines and snippets come from
-the sources in English. `--translate` sends them through OpenRouter
-(`openai/gpt-4o-mini`, about $0.03 for 130 stories) and keeps proper nouns
+the sources in English. `--translate` sends them to the model of `--model`
+(OpenRouter's free tier by default, or OpenCode Go: both cost nothing per token) and keeps proper nouns
 untouched, so *OpenAI*, *DeepSeek* and *Hugging Face* stay in English inside
 Italian sentences.
 
@@ -166,6 +167,48 @@ the same size whatever the raw counts; the badge and the `+N` note still
 report the true totals. Lead cards are ranked by a freshness / breadth /
 headline-weight heuristic.
 
+### `news.py` — a digest on any topic
+
+```bash
+just run "energia nucleare" it 7                # language and days optional (it, 7)
+just run "formula 1" en 3 --no-images           # extra options go to lgbt_news.py
+uv run news.py "energia nucleare" it 7          # topic, language, days
+uv run news.py "AI 3 days c" it 3 --reuse       # rebuild from cache: no Serper credit
+```
+
+First run: a model writes the areas, the search queries and the page texts into
+`provs/<slug>.spec.json` (editable, reused afterwards). Then the pipeline of
+`provs/lgbt_news.py` runs: Serper collection, clustering, Jev, images, summaries,
+page. Output: `provs/<slug>.html` and `.md`; every stage is cached next to them.
+Options of `provs/lgbt_news.py` are passed through (`--max-credits`, `--no-images`, ...).
+
+### Jev: who decides what
+
+`jev.py` is the client of TypeSafe's Jev: typed questions (yes/no, choice, score)
+answered in one request and cached. Jev merges same-event stories (`decide.py`), picks
+the area, and rates each story (`rate.py`: relevance for all, five more questions
+for the top of each area). A generative model only writes (translations,
+summaries, threads); code does the arithmetic.
+
+### Costs
+
+* `meter.py` counts Jev tokens, Serper credits and model tokens per run, prints a
+  progress line, and keeps stage durations in `meter-history.json`. Prices:
+  `JEV_USD_PER_MTOK_IN` (0.042), `SERPER_USD_PER_CREDIT` (0.001),
+  `LLM_USD_PER_MTOK_IN/OUT` (0: the generative model is on a flat plan).
+* `costs.py` estimates the cost of **each piece** from its real texts (no API
+  call) and shares the Serper credits among the pieces. The page shows it as a green
+  badge next to the score, and the total in the footer. A rerun from cache measures
+  nothing, so these are estimates (4 characters per token, `CPT` to change); a run
+  without `--reuse` gives the real figures in the meter line.
+* `sim_tokens.py` simulates the Jev input tokens of a whole run: `uv run sim_tokens.py
+  --stories 200 --events 150`. About $0.02 with the defaults.
+
+### `embed_html.py`
+
+`uv run embed_html.py provs/x.html` inlines the hotlinked photos (720px lead cards,
+120px the rest), so the page works as a single file. Cached in `<page>.img.data.json`.
+
 ### `demo.py` — Tavily search demo
 
 Minimal example of querying the [Tavily](https://tavily.com) search API.
@@ -181,7 +224,7 @@ python3 demo.py
 pip install requests
 ```
 
-Both scripts read their API key from an environment variable — no keys are
+The scripts read their API key (`SERPER_API_KEY`, `TYPESAFE_API_KEY`, the model key) from an environment variable — no keys are
 stored in the code.
 
 ## Keys
