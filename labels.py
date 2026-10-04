@@ -5,6 +5,9 @@
                           and every merged event with up to 40 (were the headlines really one occurrence?).
                           Jev's answer is in the "jev_*" columns: label first, look at them after.
   uv run labels.py provs/ai-3-days-c.labels.csv   -> agreement, per question
+  uv run labels.py provs/ai-3-days-c.labels.csv --rerun   -> same, asking Jev again with the
+                          current questions of rate.py (the stories are rebuilt from <slug>.json and
+                          <slug>.lead.json, without the other outlets' headlines): measures a change
 
 Fill the empty columns: ok_area y/n, relevant y/n, impact 0-3 (0 local .. 3 landmark), ptype
 (report/opinion/press_release/explainer/roundup/non_article), merge_ok y/n.
@@ -38,8 +41,40 @@ def sheet(clusters: list, path: str, n_events: int = 60, n_merges: int = 40, see
         w.writerows({k: r.get(k, "") for k in FIELDS} for r in rows)
 
 
-def score(path: str) -> None:
+def rerun(rows: list, path: str) -> None:
+    """Replaces the jev_* columns of the events with fresh answers to rate.questions()."""
+    import json
+    from concurrent.futures import ThreadPoolExecutor
+
+    import format_news as F
+    import jev as J
+    import rate as R
+    base = path.replace(".labels.csv", "")
+    raw = {it["title"]: it for it in reversed(json.load(open(base + ".json")))}
+    leads = J.load_cache(base + ".lead.json")
+    qs, key = R.questions(F.TOPIC_AI), J.load_key()
+    ev = [r for r in rows if r["kind"] == "event"]
+
+    def state(r):
+        it = raw[r["title"]]
+        c = {"title": r["title"], "snippet": it.get("snippet", ""), "sources": [{"link": it["link"]}]}
+        if leads.get(it["link"]):
+            c["lead"] = leads[it["link"]]
+        return R._state(c)
+    with ThreadPoolExecutor(4) as pool:
+        answers = list(pool.map(lambda r: J.call(key, state(r), qs), ev))
+    for r, ans in zip(ev, answers):
+        if ans:
+            e = R.normalise(ans)
+            r.update(jev_relevant=f"{e['rel']:.2f}", jev_impact=f"{e['v']['impact'] * 3:.1f}",
+                     jev_ptype=e["type"]["choice"])
+    print(f"  Jev richiesto di nuovo: {sum(1 for a in answers if a)}/{len(ev)}")
+
+
+def score(path: str, again: bool = False) -> None:
     rows = list(csv.DictReader(open(path, encoding="utf-8")))
+    if again:
+        rerun(rows, path)
 
     def rate(name, pairs):
         pairs = [(a, b) for a, b in pairs if b.strip() != ""]
@@ -51,11 +86,11 @@ def score(path: str) -> None:
     ev = [r for r in rows if r["kind"] == "event"]
     rate("area", [("y", r["ok_area"].strip().lower()) for r in ev])
     rate("pertinenza (>=0.5)", [("y" if float(r["jev_relevant"]) >= 0.5 else "n", r["relevant"].strip().lower()) for r in ev])
-    rate("impatto (+-0.5)", [(1, 1) if r["impact"].strip() and abs(float(r["jev_impact"]) - float(r["impact"])) <= 0.5 else (0, 1)
+    rate("impatto (+-0.5)", [("y", "y") if r["impact"].strip() and abs(float(r["jev_impact"]) - float(r["impact"])) <= 0.5 else ("n", "y")
                              for r in ev if r["impact"].strip()])
     rate("tipo di pezzo", [(r["jev_ptype"], r["ptype"].strip()) for r in ev])
     rate("fusioni corrette", [("y", r["merge_ok"].strip().lower()) for r in rows if r["kind"] == "merge"])
 
 
 if __name__ == "__main__":
-    score(sys.argv[1]) if len(sys.argv) > 1 else sys.exit(__doc__)
+    score(sys.argv[1], "--rerun" in sys.argv) if len(sys.argv) > 1 else sys.exit(__doc__)

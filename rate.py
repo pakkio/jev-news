@@ -24,7 +24,7 @@ import jev as J
 from meter import METER
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-VERSION = "v5"           # bump to invalidate every cached rating
+VERSION = "v6"           # bump to invalidate every cached rating
 MAX_POINTS = 22          # what a perfect story adds to the ranking score
 OPINION_PENALTY = 6      # points taken off a piece that is mostly opinion
 
@@ -62,7 +62,8 @@ def piece_options() -> dict:
     return {
         "report": {
             "what": "News reporting of a specific event, decision, incident or development.",
-            "not_for": "Commentary that merely mentions an event, or an organisation announcing its own news.",
+            "not_for": "Commentary that merely mentions an event, an organisation announcing its own news, or the "
+                       "announcement of an upcoming talk, conference or book.",
             "examples": ["Court upholds state law", "Aggredita una coppia gay a Bologna",
                          "Le Sénat adopte la loi sur le mariage", "Gericht kippt das Gesetz"],
         },
@@ -73,12 +74,15 @@ def piece_options() -> dict:
                          "Kommentar: Die Regierung versagt", "Editorial: el Gobierno se equivoca"],
         },
         "press_release": {
-            "what": "An announcement written by the organisation it concerns: a company, ministry, city hall, "
-                    "NGO or event organiser.",
+            "what": "An announcement written by, or copied from, the organisation it concerns: a company, ministry, "
+                    "city hall, NGO, publisher or event organiser. Includes the announcement of a talk, conference, "
+                    "festival, course, book or webinar, and market-research reports sold by their publisher.",
             "not_for": "Independent reporting by a newspaper about the same organisation.",
             "examples": ["EC-Council Releases ADG 2.0 and Offers Its Crosswalks Free",
                          "FVG Pride a Udine il 3 ottobre, con il patrocinio del Comune",
-                         "Pressemitteilung des Ministeriums"],
+                         "Pressemitteilung des Ministeriums",
+                         "Smart Glasses Market to Reach USD 12.4 Billion by 2033",
+                         "Giovedì in biblioteca un incontro con l'autore del libro sul futuro del lavoro"],
         },
         "explainer": {
             "what": "An explainer, guide, how-to, listicle, FAQ or evergreen background piece with no new event.",
@@ -106,9 +110,14 @@ def questions(topic: str) -> dict:
     with a `not_for` that rules out the near miss, and contrastive examples."""
     return {
         "impact": J.score_question(
-            "How far-reaching are the consequences of what `headline`, `snippet` and, when present, `other_headlines` and `lead` report?", [
-                "Personal or local interest only: one person, one business or one town, with no wider consequence.",
-                "Notable within a sector, region or community: affects a group or a market but changes nothing lasting.",
+            "How far-reaching are the consequences of the specific event, decision or finding that `headline`, `snippet` "
+            "and, when present, `other_headlines` and `lead` report? Judge what happened, not how important the subject "
+            "is in general: a guide, listicle, stock tip, promotion or event announcement has no consequence of its own, "
+            "and an essay or opinion is at most notable.", [
+                "Personal or local interest only, or nothing happened: one person, one business, one town, a talk or "
+                "a book; a guide, listicle, stock tip or promotional text.",
+                "Notable within a sector, region or community: affects a group or a market but changes nothing lasting; "
+                "or an essay, opinion or analysis of a wider question.",
                 "Significant: changes rules, rights, markets or safety for many people (a national law, a major court "
                 "decision, large funding, a major product or policy decision).",
                 "Landmark: far-reaching or precedent-setting for a whole country or the world (a supreme-court ruling, "
