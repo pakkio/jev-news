@@ -387,6 +387,9 @@ def main() -> None:
     open(f"{OUT}.html", "w").write(FN.render_html(
         clusters, meta, lang, None, generated, n_main, n_more,
         hero="off", images="all" if do_img else "off", threads=threads))
+    if not os.path.exists(f"{OUT}.labels.csv"):         # sample for the hand check of Jev (see labels.py)
+        import labels
+        labels.sheet(clusters, f"{OUT}.labels.csv")
     open(f"{OUT}.md", "w").write(FN.render_md(
         clusters, meta, lang, generated, None, n_main, n_more))
     print(f"\n  {len(raw)} storie -> {len(clusters)} eventi unici, aree: "

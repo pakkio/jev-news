@@ -24,7 +24,7 @@ import jev as J
 from meter import METER
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-VERSION = "v4"           # bump to invalidate every cached rating
+VERSION = "v5"           # bump to invalidate every cached rating
 MAX_POINTS = 22          # what a perfect story adds to the ranking score
 OPINION_PENALTY = 6      # points taken off a piece that is mostly opinion
 
@@ -106,7 +106,7 @@ def questions(topic: str) -> dict:
     with a `not_for` that rules out the near miss, and contrastive examples."""
     return {
         "impact": J.score_question(
-            "How far-reaching are the consequences of what `headline` and `snippet` report?", [
+            "How far-reaching are the consequences of what `headline`, `snippet` and, when present, `other_headlines` and `lead` report?", [
                 "Personal or local interest only: one person, one business or one town, with no wider consequence.",
                 "Notable within a sector, region or community: affects a group or a market but changes nothing lasting.",
                 "Significant: changes rules, rights, markets or safety for many people (a national law, a major court "
@@ -115,7 +115,7 @@ def questions(topic: str) -> dict:
                 "constitutional change, major crisis or conflict, an industry-defining event).",
             ]),
         "development": J.noul_question(
-            "Does `headline` or `snippet` report a specific new event, decision, announcement, ruling, vote, deal "
+            "Does `headline`, `snippet` or `lead` report a specific new event, decision, announcement, ruling, vote, deal "
             "or incident that has just happened?",
             {"what": "Reports something concrete and new: it was announced, ruled, voted, signed, launched, attacked, "
                      "acquired or discovered.",
@@ -126,7 +126,7 @@ def questions(topic: str) -> dict:
              "not_for": "A report of a new event that also contains opinion or background.",
              "examples": ["7 best stocks to buy now", "What the new law means for you",
                           "Cómo funciona la inteligencia artificial"]}),
-        "substance": J.score_question("How many concrete facts do `headline` and `snippet` give?", [
+        "substance": J.score_question("How many concrete facts do `headline`, `snippet` and, when present, `other_headlines` and `lead` give?", [
             "No concrete facts: a teaser, promotional text, a bare title, or a string of keywords.",
             "Some concrete facts but incomplete: says roughly who or what, without figures, places or dates.",
             "Specific: names who did what, where or how much, with figures, dates or quotes.",
@@ -140,9 +140,9 @@ def questions(topic: str) -> dict:
             {"what": "Ordinary reporting of public events, press releases, or reactions to news.",
              "not_for": "A headline that merely says 'breaking' or 'latest' without new information.",
              "examples": ["Mayor attends Pride parade", "Court hears two lawsuits", "Pressemitteilung des Ministeriums"]}),
-        "piece": J.choice_question("What kind of piece is this, judging by `headline` and `snippet`?", piece_options()),
+        "piece": J.choice_question("What kind of piece is this, judging by `headline`, `snippet` and, when present, `other_headlines` and `lead`?", piece_options()),
         "relevant": J.noul_question(
-            f"Is the story mainly about {topic}? Use `headline`, `snippet` and `url` (the address often names the subject).",
+            f"Is the story mainly about {topic}? Use `headline`, `snippet`, `other_headlines`, `lead` and `url` (the address often names the subject).",
             {"what": f"The central subject of the story is {topic}.",
              "examples": []},
             {"what": f"{topic[:1].upper() + topic[1:]} is only mentioned in passing, as one item in a list or as "
@@ -178,9 +178,46 @@ def points(r: dict) -> float:
     return sum(breakdown(r).values())
 
 
+LEAD_CHARS = 700         # opening of the article handed to the deep questions
+OTHERS = 4               # headlines of the other outlets that told the same event
+
+
+def others(c: dict) -> list:
+    """Headlines the same event got elsewhere: free context, the cluster already has them."""
+    seen, out = {c["title"]}, []
+    for m in c.get("members") or []:
+        t = m["title"]
+        if t not in seen:
+            seen.add(t)
+            out.append(t[:140])
+    return out[:OTHERS]
+
+
+def fetch_lead(c: dict, cache: dict) -> str:
+    """Opening paragraphs of the article (Jina Reader, no Serper credit), cached by link."""
+    import main as M
+    import summarize as SM
+    for link in [s["link"] for s in c["sources"][:3]]:
+        if link in cache:
+            if cache[link]:
+                return cache[link]
+            continue
+        ok, raw = M.jina_read(link)
+        text = SM.body_only(M.clean_content(raw)) if ok else ""
+        cache[link] = text[:LEAD_CHARS] if len(text) >= 200 else ""
+        if cache[link]:
+            return cache[link]
+    return ""
+
+
 def _state(c: dict) -> dict:
-    return {"headline": c["title"], "snippet": (c.get("snippet") or "")[:500],
-            "url": c["sources"][0]["link"][:200] if c.get("sources") else ""}
+    st = {"headline": c["title"], "snippet": (c.get("snippet") or "")[:500],
+          "url": c["sources"][0]["link"][:200] if c.get("sources") else ""}
+    if others(c):
+        st["other_headlines"] = others(c)
+    if c.get("lead"):
+        st["lead"] = c["lead"]
+    return st
 
 
 def rate(clusters: list, cache_path: str = None, topic: str = "artificial intelligence",
@@ -202,7 +239,7 @@ def rate(clusters: list, cache_path: str = None, topic: str = "artificial intell
         c["jev"], c["ptype"], c["relevance"] = e["v"], e["type"], e["rel"]
 
     def digests(c):
-        d = J.digest(VERSION, topic, c["title"], c.get("snippet", ""))
+        d = J.digest(VERSION, topic, c["title"], c.get("snippet", ""), *others(c))
         return d, "r" + d
 
     for c in clusters:
@@ -255,11 +292,20 @@ def rate(clusters: list, cache_path: str = None, topic: str = "artificial intell
         put(c, e)
         stats["new"] += 1
 
+    if todo and deep:                                  # the deep questions also read the article's opening
+        lead_path = cache_path.replace(".jev.json", ".lead.json")
+        leads = J.load_cache(lead_path)
+        with ThreadPoolExecutor(workers) as pool:
+            for (d, c), text in zip(todo, pool.map(lambda it: fetch_lead(it[1], leads), todo)):
+                if text:
+                    c["lead"] = text
+        J.save_cache(lead_path, leads)
+        stats["leads"] = sum(1 for _, c in todo if c.get("lead"))
     if todo:
         run(todo, qs, full)
     if key:
         J.save_cache(cache_path, cache)
     if not quiet:
         print(f"  valutazione Jev: complete {stats['new']}, in cache {stats['cached']}, "
-              f"solo pertinenza {stats['light']}, fallite {stats['failed']}")
+              f"solo pertinenza {stats['light']}, fallite {stats['failed']}, con testo dell'articolo {stats.get('leads', 0)}")
     return stats
