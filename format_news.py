@@ -1168,7 +1168,7 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="{FAVICON}">
-<title>{esc(t['title'])}</title>
+<title>{esc(t['title'])} · {generated}</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400&display=swap');
   *,*::before,*::after {{ box-sizing: border-box; }}

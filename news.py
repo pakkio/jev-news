@@ -14,7 +14,7 @@ Al primo giro un modello scrive le 4-5 aree tematiche, le query di ricerca e i
 testi della pagina per il tema (provs/<slug>.spec.json, modificabile a mano e
 riusato ai giri successivi). Poi parte la pipeline di lgbt_news.py: raccolta
 Serper negli ultimi N giorni, cluster, Jev, immagini, riassunti, pagina.
-Output in provs/<slug>.html.
+Output in provs/<slug>-<AAAAMMGG>-<N>d.html.
 """
 
 import json

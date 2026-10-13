@@ -73,16 +73,17 @@ def bad(row: dict) -> bool:
 
 def load_key(model: str = DEFAULT_MODEL) -> str:
     var = provider(model)[1]
-    key = os.environ.get(var, "")
-    if key:
-        return key
+    # ../.env wins over the shell: a stale exported key must not shadow it
     path = os.path.join(HERE, "..", ".env")
     if os.path.exists(path):
         for line in open(path):
             line = line.strip()
             if line.startswith(f"{var}="):
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
-    raise SystemExit(f"Error: {var} not set (and no ../.env).")
+    key = os.environ.get(var, "")
+    if key:
+        return key
+    raise SystemExit(f"Error: {var} not set (and not in ../.env).")
 
 
 SESSION = str(uuid.uuid4())
@@ -122,17 +123,28 @@ def call(key: str, model: str, payload: str, retries: int = 3, timeout: int = 90
                  "X-Title": "AI Briefing"})
     for attempt in range(retries):
         try:
+            # `timeout` is a per-read socket timeout; the deadline makes it a hard cap on
+            # the whole attempt, so a server trickling chunks cannot stall us forever
+            deadline = time.monotonic() + timeout
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                reply = json.loads(r.read())
+                chunks = []
+                while chunk := r.read(8192):
+                    chunks.append(chunk)
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(f"no complete reply within {timeout}s")
+                reply = json.loads(b"".join(chunks))
                 METER.llm(reply.get("usage"))
                 return reply["choices"][0]["message"]["content"] or ""
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503) and attempt < retries - 1:
+                print(f"  LLM HTTP {e.code}, retry {attempt + 2}/{retries}...", file=sys.stderr)
                 time.sleep(2 ** (attempt + 1))
                 continue
             raise RuntimeError(f"OpenRouter HTTP {e.code}: {e.read()[:120]!r}")
-        except Exception:
+        except Exception as e:
             if attempt < retries - 1:
+                print(f"  LLM call failed ({type(e).__name__}: {e}), retry {attempt + 2}/{retries}...",
+                      file=sys.stderr)
                 time.sleep(2 ** (attempt + 1))
                 continue
             raise

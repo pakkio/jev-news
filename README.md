@@ -179,7 +179,7 @@ uv run news.py "AI 3 days c" it 3 --reuse       # rebuild from cache: no Serper 
 First run: a model writes the areas, the search queries and the page texts into
 `provs/<slug>.spec.json` (editable, reused afterwards). Then the pipeline of
 `provs/lgbt_news.py` runs: Serper collection, clustering, Jev, images, summaries,
-page. Output: `provs/<slug>.html` and `.md`; every stage is cached next to them.
+page. Output: `provs/<slug>-<YYYYMMDD>-<N>d.html` and `.md`; every stage is cached next to them.
 Options of `provs/lgbt_news.py` are passed through (`--max-credits`, `--no-images`, ...).
 
 ### Jev: who decides what

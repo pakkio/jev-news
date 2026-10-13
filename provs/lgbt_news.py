@@ -384,7 +384,8 @@ def main() -> None:
     import costs
     credits = METER.serper_credits or min(max_credits, sum(len(v) for v in QUERIES.values()))
     FN.COST = costs.attach(clusters, AREAS, TOPIC, credits)     # estimate per piece + total
-    open(f"{OUT}.html", "w").write(FN.render_html(
+    html_path = f"{OUT}-{datetime.now():%Y%m%d}-{DAYS}d.html"     # dated page; caches keep the bare OUT prefix
+    open(html_path, "w").write(FN.render_html(
         clusters, meta, lang, None, generated, n_main, n_more,
         hero="off", images="all" if do_img else "off", threads=threads))
     if not os.path.exists(f"{OUT}.labels.csv"):         # sample for the hand check of Jev (see labels.py)
@@ -393,7 +394,7 @@ def main() -> None:
     open(f"{OUT}.md", "w").write(FN.render_md(
         clusters, meta, lang, generated, None, n_main, n_more))
     print(f"\n  {len(raw)} storie -> {len(clusters)} eventi unici, aree: "
-          f"{dict(per_area)}\n  scritto {OUT}.html")
+          f"{dict(per_area)}\n  scritto {html_path}")
     METER.finish()
 
 
