@@ -62,8 +62,8 @@ python3 format_news.py --lang it --intro "..." [--main 4] [--more 6] [--folded]
 | `--hero N` | banner image: `earth` (default), `circuit`, `code`, `robot`, `laptop`, `off`, or any URL |
 | `--images M` | story images: `all` (default), `main` (lead cards only), `off` |
 
-Grouped into five thematic areas (Politica e sicurezza, Modelli e ricerca,
-Chip e infrastrutture, Business, Settore), each with its own accent colour and
+Grouped into six thematic areas (Business, Design, Regulation, Just for fun,
+Models & Rumors, Frontiers), each with its own accent colour and
 a note explaining what belongs there.
 
 ### How stories get unified

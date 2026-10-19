@@ -27,30 +27,34 @@ DROP_QS = ("utm_", "fbclid", "gclid", "ref", "cmpid", "smid")
 
 # Query list per area, ordered from most on-point to broadest.
 QUERIES = {
-    "policy": [
+    "business": [
+        "AI startup funding round", "AI acquisition", "AI revenue earnings",
+        "AI company valuation", "AI partnership deal", "Nvidia AI chip",
+        "AI data center investment", "AI IPO",
+    ],
+    "design": [
+        "AI design tools", "generative AI creative industry", "AI UX product design",
+        "AI image generator", "AI video generator", "Figma Adobe AI",
+        "AI music creative", "AI designers jobs",
+    ],
+    "regulation": [
         "AI regulation law", "AI policy government", "AI safety lawsuit",
         "AI antitrust", "AI export controls", "AI copyright ruling",
         "artificial intelligence oversight", "AI data privacy enforcement",
     ],
+    "fun": [
+        "AI funny viral", "AI weird story", "AI meme", "AI game",
+        "AI robot viral video", "chatbot funny", "AI prank", "AI pop culture",
+    ],
     "models": [
         "AI model release", "new LLM model", "AI benchmark reasoning model",
-        "open weight model", "AI research paper breakthrough", "multimodal AI model",
-        "AI agent", "fine tuning new model",
+        "open weight model", "AI model rumor leak", "multimodal AI model",
+        "GPT Gemini Claude new version", "Grok DeepSeek new model",
     ],
-    "chips": [
-        "Nvidia AI chip", "AI data center investment", "TSMC AI chip",
-        "AMD AI accelerator", "AI chip export ban", "AI compute capacity",
-        "AI semiconductor supply", "HBM memory AI",
-    ],
-    "business": [
-        "AI startup funding round", "AI acquisition", "AI revenue earnings",
-        "AI company valuation", "AI partnership deal", "AI enterprise spending",
-        "AI layoffs jobs", "AI IPO",
-    ],
-    "industry": [
-        "AI in healthcare", "AI in education", "AI jobs workers",
-        "AI adoption enterprise", "AI creative industry", "AI energy climate",
-        "AI robotics", "AI consumers assistants",
+    "frontiers": [
+        "AI research paper breakthrough", "AI agents", "AI robotics",
+        "AI science discovery", "AI mathematics", "AI healthcare",
+        "AI jobs workers", "AI energy climate",
     ],
 }
 
@@ -118,6 +122,8 @@ def main() -> None:
         for n in serper_news(key, query):
             link = n.get("link", "")
             if not link:
+                continue
+            if len(n.get("title", "").split()) < 3:  # pagine-tema tipo "Artificial Intelligence"
                 continue
             c = canonical(link)
             if c in seen:

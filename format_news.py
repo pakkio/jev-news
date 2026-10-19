@@ -29,80 +29,93 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # Ogni area ha nome bilingue, colore d'accento e una nota che spiega perché esiste.
 AREAS = [
     dict(
-        key="policy", color="#f4a261",
+        key="business", color="#9ece6a",
+        jev={"what": "Money and deals: funding rounds, valuations, acquisitions, mergers, earnings, IPOs, "
+                     "layoffs and market moves involving AI companies; also chips, GPUs, data centres and "
+                     "compute capacity when the story is about investment, supply or cost.",
+             "not_for": "A product or model launch with no financial angle, or research results.",
+             "examples": ["AI startup raises $350 million", "Anthropic files for IPO", "Levée de fonds record pour une start-up IA",
+                          "Nvidia-Aktie steigt nach Quartalszahlen", "Centros de datos de IA en España"]},
+        it=('Business',
+            'Le notizie che impattano strategie, mercati e organizzazioni.'),
+        en=('Business',
+            'News that affect strategies, markets and organizations.'),
+        pat=r"\b(funding|funding round|raise|raised|valuation|revenue|revenues|ipo|prospectus|"
+            r"acqui(red|res|sition)|merger|partnership|partner|partners|invest|"
+            r"invests|investor|venture|series [a-e]\b|billion|million|earnings|"
+            r"layoff|layoffs|profit|market share|bankrupt|spin.?off|"
+            r"nvidia|data.?cent(er|re|ri)|capex)\b",
+    ),
+    dict(
+        key="frontiers", color="#7dcfff",
+        jev={"what": "Research and the leading edge: papers, new techniques, agents, robotics, science and "
+                     "mathematics with AI, chips and hardware advances, and wider impact on society, work and "
+                     "sectors. Also everything about AI that fits no other area.",
+             "examples": ["AI proves a new maths theorem", "World models learn to plan", "L'IA nella sanità",
+                          "KI und Arbeitsplätze"]},
+        it=('Frontiers',
+            'I progressi più avanzati in ricerca e sviluppo tecnologico AI.'),
+        en=('Frontiers',
+            'The most advanced progress in AI research and technology development.'),
+        pat=r".*",  # fallback
+    ),
+    dict(
+        key="design", color="#bb9af7",
+        jev={"what": "AI in design and creative work: UX and product design, generative image, video and "
+                     "music tools, design software, creative industries, and how AI changes designers' jobs.",
+             "not_for": "Funding news, model benchmarks, government rules, AI courses or tool round-ups for general users.",
+             "examples": ["Figma adds AI design agent", "Adobe Firefly new video model", "L'IA nel design di prodotto",
+                          "KI verändert die Arbeit von Designern"]},
+        it=('Design',
+            "Esperienze, prodotto, UX e creatività nell'era dell'AI."),
+        en=('Design',
+            'Experiences, product, UX and creativity in the age of AI.'),
+        pat=r"\b(design|designer|designers|ux|ui|figma|adobe|firefly|midjourney|canva|creative|"
+            r"illustrat\w*|image generat\w*|video generat\w*|sora|runway)\b",
+    ),
+    dict(
+        key="regulation", color="#f4a261",
         jev={"what": "Government and public-sector action about AI: laws, regulation, courts and lawsuits, "
                      "antitrust, export controls, safety and ethics governance, official statements on rules.",
-             "not_for": "A company's product or funding news, or research results.",
+             "not_for": "A company's product or funding news, research results, op-eds and opinion essays, or a bare topic page.",
              "examples": ["Senate passes AI bill", "Trump signs accord with tech companies",
                           "L'UE adopte l'AI Act", "OpenAI wegen Hackerangriff verklagt"]},
-        it=("Politica, sicurezza e governance",
-            "Chi detta le regole: leggi, organismi, antitrust e dichiarazioni al vertice."),
-        en=("Policy, Safety & Governance",
-            "Who sets the rules: legislation, agencies, antitrust and executive statements."),
-        pat=r"\b(regulat|policy|policymaker|senate|congress|parliament|white house|administration|"
+        it=('Regulation',
+            'Policy, norme e governance: cosa cambia e perché.'),
+        en=('Regulation',
+            'Policy, rules and governance: what changes and why.'),
+        pat=r"\b(regulat\w*|policy|policymaker|senate|congress|parliament|white house|administration|"
             r"law|lawsuit|laws|bill|ban|banned|court|ruling|sue|suing|jail|criminal|"
-            r"safety|alignment|guardrail|red.?team|governance|antitrust|doj|ftc|eu ai act|"
-            r"ai act|commission|self.?regulat|openai and the government|executive order)\b",
+            r"safety|governance|antitrust|doj|ftc|eu ai act|ai act|commission|executive order)\b",
+    ),
+    dict(
+        key="fun", color="#e0af68",
+        jev={"what": "Light, curious or funny AI stories: oddities, memes, viral moments, games, "
+                     "gadgets, pop culture, human-interest anecdotes.",
+             "not_for": "Serious business, research or regulation news; sexual or spam content, companion chatbots, SEO listicles.",
+             "examples": ["Chatbot writes a wedding toast that goes viral", "AI-generated band tops charts",
+                          "Un robot cuoco sbaglia la pizza", "KI-Pinguin erobert das Netz"]},
+        it=('Just for fun',
+            'Curiosità e momenti leggeri dal mondo AI.'),
+        en=('Just for fun',
+            'Curiosities and lighter moments from the world of AI.'),
+        pat=r"\b(funny|hilarious|viral|meme|memes|prank|quirky|bizarre|weird|fun|joke|game|games|"
+            r"gaming|toy|toys|pizza|dog|cat)\b",
     ),
     dict(
         key="models", color="#7aa2f7",
-        jev={"what": "New AI models and products from AI labs, research results, benchmarks, techniques, "
-                     "agents and open-source releases.",
-             "not_for": "Funding and acquisitions, chips and data centres, or government rules.",
+        jev={"what": "Releases of AI models and products from AI labs, versions and updates, "
+                     "benchmarks, open-source releases, and unconfirmed rumors or leaks about upcoming models.",
+             "not_for": "Funding and acquisitions, office or productivity software, news-industry pilots, or government rules.",
              "examples": ["OpenAI releases a new reasoning model", "DeepSeek veröffentlicht neues Modell",
-                          "Nuevo benchmark de razonamiento", "Nuovo modello open source"]},
-        it=("Modelli e ricerca",
-            "Cosa viene effettivamente costruito: rilasci, benchmark, paper e tecniche."),
-        en=("Models & Research",
-            "What is actually being built: releases, benchmarks, papers and techniques."),
-        pat=r"\b(release|releases|released|launch|launches|unveil|debut|model|models|llm|llms|"
+                          "Nuevo modelo de código abierto", "Rumor: Gemini 4 leaked in app code"]},
+        it=('Modelli & Rumor',
+            'Gli ultimi modelli di IA nel mondo, laboratorio per laboratorio, e le voci non confermate sui prossimi arrivi.'),
+        en=('Models & Rumors',
+            "The latest AI models worldwide, lab by lab, and unconfirmed rumors about what's next."),
+        pat=r"\b(model|models|llm|llms|"
             r"benchmark|gpt|chatgpt|gemini|claude|llama|mistral|deepseek|qwen|grok|kimi|"
-            r"reasoning|reasoner|inference|training|fine.?tun|context window|open.?weight|"
-            r"open.?sourc|multimodal|diffusion|transformer|paper|arxiv|research|researchers|"
-            r"fine.?tuning|dataset|token|agent|agents|agi|superintellig)\b",
-    ),
-    dict(
-        key="chips", color="#e0af68",
-        jev={"what": "Semiconductors, GPUs and accelerators, memory, data centres, compute capacity, power "
-                     "and energy for AI, supply chains.",
-             "not_for": "A model launch, or a funding round that only mentions a chip maker.",
-             "examples": ["Nvidia unveils new GPU", "TSMC erweitert die Fertigung", "Centros de datos de IA en España",
-                          "AMD acquisisce un produttore di chip"]},
-        it=("Chip, calcolo e infrastrutture",
-            "Il piano fisico sotto il software: silicio, data center e costi di calcolo."),
-        en=("Chips, Compute & Infrastructure",
-            "The physical layer under the software: silicon, data centres and compute cost."),
-        pat=r"\b(chip|chips|chipmaker|semiconductor|nvidia|gpu|gpus|tpu|accelerator|huawei|ascend|"
-            r"cannond|brocade|data.?cent(er|re|ri)|cluster|compute|computing|cuda|blackwell|"
-            r"tsmc|asml|arm holdi|wafer|fab|foundry|capex|cost per token|inference cost|power grid)\b",
-    ),
-    dict(
-        key="business", color="#9ece6a",
-        jev={"what": "Money and deals: funding rounds, valuations, acquisitions, mergers, earnings, IPOs, "
-                     "stock-picking, layoffs and market moves involving AI companies.",
-             "not_for": "A product or model launch with no financial angle.",
-             "examples": ["AI startup raises $350 million", "Anthropic files for IPO", "Levée de fonds record pour une start-up IA",
-                          "Nvidia-Aktie steigt nach Quartalszahlen"]},
-        it=("Business, capitali e accordi",
-            "Soldi e potere: finanziamenti, valutazioni, partnership e acquisizioni."),
-        en=("Business, Capital & Deals",
-            "Money and power: funding rounds, valuations, partnerships and acquisitions."),
-        pat=r"\b(funding|funding round|raise|raised|valuation|revenue|revenues|ipo|prospectus|"
-            r"acqui(red|res|sition|sition)|merger|partnership|partner|partners|invest|"
-            r"invests|investor|venture|series [a-e]\b|billion|million|earnings|revenue|"
-            r"layoff|layoffs|profit|market share|bankrupt|spin.?off|ipo)\b",
-    ),
-    dict(
-        key="industry", color="#bb9af7",
-        jev={"what": "Everything else about AI: its use in a sector (health, education, jobs, media, energy, "
-                     "public services), its social and cultural impact, explainers and opinion.",
-             "examples": ["AI in schools: what teachers say", "L'IA nella sanità", "KI und Arbeitsplätze",
-                          "La inteligencia artificial en la educación"]},
-        it=("Settore, persone e impatti",
-            "Tutto il resto: applicazioni verticali, lavoro, cultura e vita quotidiana."),
-        en=("Industry, People & Impact",
-            "Everything else: vertical applications, jobs, culture and everyday life."),
-        pat=r".*",  # fallback
+            r"open.?weight|open.?sourc|rumou?r|rumou?rs|leak|leaked|leaks)\b",
     ),
 ]
 
@@ -733,6 +746,29 @@ def deep_candidates(clusters: list) -> list:
     return out
 
 
+# Correzioni a mano per storie che Jev colloca male (titolo -> area), e titoli da scartare.
+AREA_OVERRIDES = [
+    (r"adobe software dupe|news ai pilot|google.s news ai", "business"),
+    (r"^a story, the artisan", None),
+    (r"why we.re banning ai", None),
+    (r"hot girls are ripping off|ai girlfriend|ai companions? for lonely", None),
+    (r"chatgpt vs\.? claude vs\.? gemini|i.ve spent over \$[\d,]+ on chatgpt", "frontiers"),
+    (r"favorite ai tool on android|faking how much they know about ai|outsourced my life to ai agents", "frontiers"),
+]
+
+
+def apply_overrides(clusters: list) -> None:
+    for c in clusters:
+        for pat, area in AREA_OVERRIDES:
+            if re.search(pat, c["title"], re.I):
+                if area is None:
+                    c["relevance"] = 0.0   # scartata da jev_judge come fuori tema
+                else:
+                    c["area"] = area
+                    c["color"] = next(a["color"] for a in AREAS if a["key"] == area)
+                break
+
+
 def jev_judge(clusters: list, prefix: str, topic: str) -> list:
     """Same-event merging, editorial rating, piece type and relevance, all by Jev.
     Removes what is plainly not about the topic or not an article, and returns it."""
@@ -746,12 +782,14 @@ def jev_judge(clusters: list, prefix: str, topic: str) -> list:
         print(f"  fusioni con Jev non disponibili ({str(e)[:60]}): resto sul confronto di parole")
     METER.stage("aree")          # after merging: one area question per event, not per headline
     jev_classify(clusters, prefix, quiet=True)
+    apply_overrides(clusters)
     METER.stage("valutazione")
     try:
         RATE.rate(clusters, cache_path=f"{prefix}.jev.json", topic=topic,
                   deep=deep_candidates, rel_min=REL_DROP)
     except (SystemExit, Exception) as e:  # noqa: BLE001
         print(f"  valutazione Jev non disponibile ({str(e)[:60]}): ordine senza valutazione di contenuto")
+    apply_overrides(clusters)    # again: the rating above sets relevance
     out = []
     for c in clusters:
         rel, pt = c.get("relevance"), c.get("ptype")
@@ -903,9 +941,9 @@ def hours(d: str) -> float:
 def classify(title: str, snippet: str) -> tuple:
     blob = f"{title} {snippet}".lower()
     for a in AREAS:
-        if a["key"] != "industry" and re.search(a["pat"], blob, re.I):
+        if a["key"] != "frontiers" and re.search(a["pat"], blob, re.I):
             return a["key"], a["color"]
-    return "industry", AREAS[-1]["color"]
+    return "frontiers", next(a["color"] for a in AREAS if a["key"] == "frontiers")
 
 
 PAGE_JS = r'''(function () {
@@ -1684,11 +1722,8 @@ def why_data(c: dict, lang: str, role: tuple, t: dict) -> dict:
 
 
 def cost_chip(c: dict) -> str:
-    """Estimated cost of the piece (Jev questions + its share of the Serper searches)."""
-    if c.get("cost") is None:
-        return ""
-    return (f'<span class="badge cost" title="Costo stimato del pezzo: domande a Jev + quota delle ricerche Serper">'
-            f'${c["cost"]:.4f}</span>')
+    """No per-card price tag: the cost only appears in the edition footer."""
+    return ""
 
 
 def ptype_chip(c: dict) -> str:
