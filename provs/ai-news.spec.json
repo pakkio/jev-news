@@ -5,18 +5,50 @@
  "topic": "AI News: covering models, applications, regulation, business, and general developments",
  "areas": [
   {
-   "key": "models-research",
-   "what": "New AI model releases, research papers, benchmarks, technical breakthroughs, open-source models, architecture innovations",
-   "not_for": "Commercial product launches, policy discussions, funding rounds, general industry commentary",
+   "key": "business",
+   "what": "Impact on business models, operations, strategy, investments, M&A, commercial partnerships, enterprise adoption, productivity, workforce; billion-dollar compute/services deals",
+   "not_for": "Technical details on chips or models, benchmarks, architectures, technical release notes (those are Frontiers)",
    "examples": [
-    "GPT-5 achieves human-level reasoning on ARC benchmark",
-    "Meta releases Llama 3.1 405B: largest open model yet",
-    "新研究：Transformer架构在长上下文任务中突破性进展",
-    "Mistral Large 2 beats GPT-4 on coding benchmarks"
+    "Copilot cuts quoting times for sales teams",
+    "Bank automates due diligence with LLMs",
+    "Billion-dollar compute deal between AI lab and cloud provider",
+    "Startup raises Series B to automate back-office work"
    ],
-   "name": "Modelli e Ricerca",
-   "note": "Nuovi modelli, paper, benchmark e scoperte tecniche",
-   "pat": "(?i)\\b(llm|gpt|llama|mistral|gemini|claude|model|benchmark|paper|arxiv|transformer|architecture|parameter|open.source|weights|fine.tun|reasoning|coding|math|arc|mmlu|eval|release|v\\d+\\.\\d+)\\b",
+   "name": "Business",
+   "note": "Impatto su modelli di business, strategia, investimenti, M&A, adozione in azienda e lavoro",
+   "pat": "(?i)\\b(invest\\w*|funding|raises?|valuation|acquir\\w*|acquisition|merger|partnership|revenue|profit|ipo|enterprise|workforce|layoffs?|productivity|market|startup|billion)\\b",
+   "queries": [
+    [
+     "AI funding round acquisition",
+     null
+    ],
+    [
+     "enterprise AI adoption productivity",
+     null
+    ],
+    [
+     "AI partnership deal billion",
+     null
+    ],
+    [
+     "intelligenza artificiale investimenti aziende",
+     "it"
+    ]
+   ]
+  },
+  {
+   "key": "frontiers",
+   "what": "Scientific and engineering advances: models, training, evaluation, technical safety, peer-reviewed papers, open-source releases with technical value, new measurable capabilities",
+   "not_for": "Industry gossip, company rivalry, market share, who is winning the race, commercial battles (those are Business)",
+   "examples": [
+    "New multimodal model with longer context",
+    "Training technique that improves reasoning",
+    "New benchmark for agent evaluation",
+    "Open-weight model matches proprietary results"
+   ],
+   "name": "Frontiers",
+   "note": "Avanzamenti scientifici e ingegneristici: modelli, training, valutazione, sicurezza tecnica",
+   "pat": "(?i)\\b(llm|gpt|llama|mistral|gemini|claude|model|benchmark|paper|arxiv|transformer|parameters?|open.source|open.weights?|fine.tun\\w*|reasoning|eval\\w*|training|research|chips?|gpu)\\b",
    "queries": [
     [
      "AI model release benchmark",
@@ -37,57 +69,53 @@
    ]
   },
   {
-   "key": "applications-products",
-   "what": "AI product launches, feature updates, integrations, consumer applications, enterprise tools, copilots, agents, APIs",
-   "not_for": "Underlying model releases, research papers, regulatory decisions, funding announcements",
+   "key": "design",
+   "what": "UX/UI, conversational interactions, multimodality, accessibility, tools for designers, new interaction metaphors, agent UX",
+   "not_for": "Policy and legal matters (Regulation) and pure research with no impact on the user experience (Frontiers)",
    "examples": [
-    "Google integrates Gemini into Workspace with new side panel",
-    "Microsoft Copilot gets voice mode and vision capabilities",
-    "Apple Intelligence launches with iOS 18.1 beta",
-    "ChatGPT Search now available to all users"
+    "Figma introduces an AI co-designer",
+    "New multimodal gestures for assistants",
+    "No-code tool for AI-first apps",
+    "Voice interface redesigned for accessibility"
    ],
-   "name": "Applicazioni e Prodotti",
-   "note": "Lanci di prodotto, aggiornamenti, integrazioni e tool per utenti",
-   "pat": "(?i)\\b(copilot|assistant|agent|chatbot|integration|api|sdk|plugin|feature|launch|release|update|workspace|office|search|voice|vision|multimodal|app|product|tool|interface)\\b",
+   "name": "Design",
+   "note": "UX/UI, interazioni conversazionali, multimodalità, accessibilità e strumenti per designer",
+   "pat": "(?i)\\b(ux|ui|interface|design\\w*|figma|accessib\\w*|multimodal|voice|assistant|no.code|app|copilot|agent ux|user experience)\\b",
    "queries": [
     [
-     "AI product launch copilot assistant",
+     "AI user interface design UX",
      null
     ],
     [
-     "new AI feature integration",
+     "AI design tool Figma",
      null
     ],
     [
-     "AI agent tool release",
+     "conversational AI interface accessibility",
      null
     ],
     [
-     "nuovo prodotto AI assistente copilot",
+     "design interfacce intelligenza artificiale",
      "it"
     ]
    ]
   },
   {
-   "key": "regulation-policy",
-   "what": "AI regulation, legislation, policy, compliance, safety standards, government actions, international agreements, copyright lawsuits",
-   "not_for": "Technical research, product launches, business deals, market analysis",
+   "key": "regulation",
+   "what": "AI Act, rules, enforcement, lawsuits, licensing, copyright, data protection, audits, governance, standards and guidelines",
+   "not_for": "Corporate policy or market competition not tied to rules (those are Business)",
    "examples": [
-    "EU AI Act enters into force with phased compliance timeline",
-    "California SB 1047 passes legislature, heads to governor",
-    "UK signs international AI safety treaty at Bletchley Park",
-    "Copyright lawsuit against AI companies advances in US court"
+    "EU approves AI Act implementing rules",
+    "FTC investigates competitive risks of AI deals",
+    "Court ruling on training data and copyright",
+    "State passes AI transparency law"
    ],
-   "name": "Regolamentazione e Policy",
-   "note": "Leggi, regolamenti, standard di sicurezza e azioni governative",
-   "pat": "(?i)\\b(regulation|act|bill|law|legislation|policy|compliance|governance|safety|alignment|copyright|lawsuit|government|parliament|congress|eu|ai.act|sb.1047|bletchley|treaty|standard|audit|risk|ban|restriction)\\b",
+   "name": "Regulation",
+   "note": "Norme, cause legali, copyright, protezione dei dati, governance e standard",
+   "pat": "(?i)\\b(regulat\\w*|law\\w*|lawsuit|sue[sd]?|court|copyright|ai act|compliance|governance|privacy|gdpr|ftc|senate|congress|ban|legislat\\w*|policy|fines?|enforcement|norme|legge|multe?|garante)\\b",
    "queries": [
     [
-     "AI regulation law policy",
-     null
-    ],
-    [
-     "AI safety compliance standard",
+     "AI regulation law",
      null
     ],
     [
@@ -95,71 +123,43 @@
      null
     ],
     [
-     "regolamentazione intelligenza artificiale legge",
+     "AI Act compliance enforcement",
+     null
+    ],
+    [
+     "regolamentazione intelligenza artificiale",
      "it"
     ]
    ]
   },
   {
-   "key": "business-investment",
-   "what": "Funding rounds, acquisitions, IPOs, valuations, partnerships, market trends, earnings, chip supply, data center investments",
-   "not_for": "Technical model details, product features, regulatory texts, pure research",
+   "key": "fun",
+   "what": "Experiments, creative or curious uses, demos, light applications that fit none of the other categories",
+   "not_for": "Serious business, research or regulation news",
    "examples": [
-    "OpenAI raises $6.5B at $150B valuation led by Thrive",
-    "Nvidia acquires AI infrastructure startup for $2.1B",
-    "Amazon invests $4B additional in Anthropic partnership",
-    "AI chip demand drives TSMC record quarterly revenue"
+    "Museum reimagines portraits with AI",
+    "Playlist generated from your dreams",
+    "AI episode of a classic TV series",
+    "Chatbot invents a new language for a game"
    ],
-   "name": "Business e Investimenti",
-   "note": "Finanziamenti, acquisizioni, partnership e trend di mercato",
-   "pat": "(?i)\\b(funding|investment|round|series|valuation|acquisition|merger|ipo|partnership|deal|revenue|earnings|chip|gpu|nvidia|datacenter|infrastructure|billion|million|venture|capital|investor|startup|unicorn)\\b",
+   "name": "Just for fun",
+   "note": "Esperimenti, usi creativi o curiosi, demo e applicazioni leggere",
+   "pat": "(?i)\\b(fun|funny|weird|creative|art|artist|music|song|game|gaming|meme|viral|video|film|movie|experiment|demo|toy|joke)\\b",
    "queries": [
     [
-     "AI funding round valuation",
+     "funny weird AI experiment",
      null
     ],
     [
-     "AI acquisition merger partnership",
+     "creative AI art music",
      null
     ],
     [
-     "AI chip investment datacenter",
+     "viral AI video meme",
      null
     ],
     [
-     "investimento intelligenza artificiale finanziamento",
-     "it"
-    ]
-   ]
-  },
-  {
-   "key": "other",
-   "what": "Any AI-related news not fitting other categories: opinion pieces, interviews, surveys, education, talent, conferences, benchmarks not tied to releases, miscellaneous",
-   "not_for": "",
-   "examples": [
-    "Survey: 72% of developers now use AI coding tools daily",
-    "Geoffrey Hinton warns of AI risks in Nobel lecture",
-    "NeurIPS 2024 accepts record number of papers",
-    "Università lancia nuovo master in AI generativa"
-   ],
-   "name": "Altre Notizie AI",
-   "note": "Opinioni, interviste, sondaggi, eventi, formazione e contenuti vari",
-   "pat": ".*",
-   "queries": [
-    [
-     "AI survey developer adoption",
-     null
-    ],
-    [
-     "AI conference neurips icml",
-     null
-    ],
-    [
-     "AI education talent hiring",
-     null
-    ],
-    [
-     "intelligenza artificiale sondaggio conferenza",
+     "intelligenza artificiale curiosità esperimento",
      "it"
     ]
    ]
