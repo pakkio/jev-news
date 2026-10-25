@@ -1,0 +1,136 @@
+{
+ "title": "Jev: le novità della settimana",
+ "kicker": "Rassegna · settimana del",
+ "sub": "Nella rassegna trovi {n} storie dagli ultimi {window}",
+ "topic": "Jev: its a, b, c or d",
+ "areas": [
+  {
+   "key": "product_news",
+   "what": "English: news about Jev product launches, updates, releases",
+   "not_for": "English: general commentary or analysis without product specifics",
+   "examples": [
+    "Jev unveils next‑generation sensor at CES 2025",
+    "Jev presenta il nuovo sensore di ultima generazione al CES 2025",
+    "Jev lance son capteur de nouvelle génération au CES 2025",
+    "Jev revela su nuevo sensor en el CES 2025"
+   ],
+   "name": "Novità di prodotto",
+   "note": "Contiene comunicati stampa e annunci di nuovi prodotti o aggiornamenti legati a Jev.",
+   "pat": "\\bjev\\b.*\\b(product|launch|release|update|new|nuovo|annuncio|lancio)\\b",
+   "queries": [
+    [
+     "Jev product launch",
+     null
+    ],
+    [
+     "Jev new release",
+     null
+    ],
+    [
+     "Jev lancio prodotto",
+     "it"
+    ],
+    [
+     "Jev nuovo annuncio",
+     "it"
+    ]
+   ]
+  },
+  {
+   "key": "analysis",
+   "what": "English: analytical pieces, op-eds, expert commentary on Jev",
+   "not_for": "English: straight news reports without analysis",
+   "examples": [
+    "Experts debate Jev’s impact on renewable energy markets",
+    "Esperti discutono l'impatto di Jev sui mercati delle energie rinnovabili",
+    "Experten diskutieren Jevs Einfluss auf erneuerbare Energiemärkte",
+    "Especialistas debatem o impacto do Jev nos mercados de energia renovável"
+   ],
+   "name": "Analisi e opinioni",
+   "note": "Contiene articoli di approfondimento, commenti esperti e recensioni su Jev.",
+   "pat": "\\bjev\\b.*\\b(analysis|opinion|commentary|review|analisi|opinione|commento|recensione)\\b",
+   "queries": [
+    [
+     "Jev analysis",
+     null
+    ],
+    [
+     "Jev opinion piece",
+     null
+    ],
+    [
+     "Jev analisi",
+     "it"
+    ],
+    [
+     "Jev opinione",
+     "it"
+    ]
+   ]
+  },
+  {
+   "key": "events",
+   "what": "English: coverage of events, conferences, webinars featuring Jev",
+   "not_for": "English: general news not tied to an event",
+   "examples": [
+    "Jev to headline keynote at Global Tech Summit 2025",
+    "Jev sarà protagonista del keynote al Global Tech Summit 2025",
+    "Jev encabezará la charla principal en la Cumbre Global de Tecnología 2025",
+    "Jev、グローバルテックサミット2025で基調講演を行う"
+   ],
+   "name": "Eventi e conferenze",
+   "note": "Contiene notizie su congressi, fiere, webinar e incontri dove Jev è protagonista.",
+   "pat": "\\bjev\\b.*\\b(event|conference|webinar|summit|expo|fiera|congresso|incontro|evento)\\b",
+   "queries": [
+    [
+     "Jev conference",
+     null
+    ],
+    [
+     "Jev webinar",
+     null
+    ],
+    [
+     "Jev evento",
+     "it"
+    ],
+    [
+     "Jev conferenza",
+     "it"
+    ]
+   ]
+  },
+  {
+   "key": "other",
+   "what": "English: any other Jev-related content not covered above",
+   "not_for": "",
+   "examples": [
+    "Jev shares rise after quarterly earnings beat",
+    "Le azioni di Jev salgono dopo aver superato le stime trimestrali",
+    "Le cours de l'action Jev grimpe après des résultats trimestriels supérieurs aux attentes",
+    "Jev股价因季度财报超预期而上涨"
+   ],
+   "name": "Altro",
+   "note": "Contiene ogni altra menzione di Jev che non rientra nelle altre categorie.",
+   "pat": ".*",
+   "queries": [
+    [
+     "Jev news",
+     null
+    ],
+    [
+     "Jev update",
+     null
+    ],
+    [
+     "Jev notizie",
+     "it"
+    ],
+    [
+     "Jev informazioni",
+     "it"
+    ]
+   ]
+  }
+ ]
+}

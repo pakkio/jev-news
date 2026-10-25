@@ -130,7 +130,7 @@ UI = {
         main_label="Notizie principali", sub_label="Secondarie",
         more_note="altre in quest'area",
         sources="fonti", sources_one="fonte", read="Riassunto",
-        flip_tip="Gira la scheda: riassunto in italiano", back_label="Torna alla notizia",
+        flip_tip="Apri il riassunto in italiano", back_label="Torna alla notizia",
         why_btn="Perché?", why_tip="Perché questa notizia è qui e con questo punteggio",
         why_title="Perché è qui?", why_where="Dove si trova",
         why_role_main="Scheda principale dell'area «{a}»", why_role_brief="Riga secondaria dell'area «{a}»",
@@ -191,7 +191,7 @@ UI = {
         main_label="Lead stories", sub_label="Briefs",
         more_note="more in this area",
         sources="sources", sources_one="source", read="Summary",
-        flip_tip="Flip the card for the summary", back_label="Back to the story",
+        flip_tip="Open the summary", back_label="Back to the story",
         why_btn="Why?", why_tip="Why this story is here, with this score",
         why_title="Why is it here?", why_where="Where it sits",
         why_role_main="Main card of the “{a}” area", why_role_brief="Secondary row of the “{a}” area",
@@ -372,7 +372,33 @@ def show(c: dict, field: str = "title") -> str:
     text = c.get(f"{field}_it") or c[field]
     if field == "title" and c.get("sources"):
         return clean_title(text, c["sources"][0]["name"])
+    if field == "snippet":
+        return tidy(text)
     return text
+
+
+_END = re.compile(r"[.!?]['\")\u00bb\u201d]*(?=\s|$)")
+_START = re.compile(r"[.!?]['\")\u00bb\u201d]*\s+(?=[A-Z\u00c0-\u00dd0-9\"'\u201c\u00ab])")
+
+
+def tidy(text: str) -> str:
+    """Google News snippets are cut at both ends ("...report of..."). Shows whole
+    sentences only: drops a leading fragment and a trailing unfinished sentence.
+    When no whole sentence can be saved, the fragment stays, marked with an ellipsis."""
+    t = " ".join((text or "").split())
+    cut = bool(re.search(r"(\.\.\.|\u2026)$", t))
+    t = re.sub(r"^(\.\.\.|\u2026)\s*", "", t)
+    if t[:1].islower():                              # starts mid-sentence
+        m = _START.search(t)
+        if m and len(t) - m.end() >= 40:
+            t = t[m.end():]
+    t = re.sub(r"\s*(\.\.\.|\u2026)$", "", t)
+    if cut or not re.search(r"[.!?]['\")\u00bb\u201d]*$", t):
+        ends = [m.end() for m in _END.finditer(t)]
+        if ends and ends[-1] >= 40:
+            return t[:ends[-1]].strip()
+        return t.rstrip(" ,;:-") + "\u2026"
+    return t
 
 
 # ----------------------------------------------------------- filler items ----
@@ -1050,20 +1076,6 @@ PAGE_JS = r'''(function () {
     openDlg(w, from);
   }
 
-  function flip(card, on) {
-    card.classList.toggle('flipped', on);
-    var front = card.querySelector('.front'), back = card.querySelector('.back');
-    front.inert = on; back.inert = !on;      // the hidden face must not take focus
-    front.setAttribute('aria-hidden', on ? 'true' : 'false');
-    back.setAttribute('aria-hidden', on ? 'false' : 'true');
-    var row = card.parentNode;                       // while a tile is open its neighbours keep
-    row.classList.toggle('has-flip', !!row.querySelector('.card.flipped'));   // their own height
-    var inner = card.querySelector('.card-inner');   // grow only if the summary needs room
-    inner.style.minHeight = on ? Math.max(inner.offsetHeight, back.scrollHeight + 2) + 'px' : '';
-    var next = card.querySelector(on ? '.back-x' : '.go');
-    if (next) next.focus({ preventScroll: true });
-  }
-
   function colorOf(node) {
     var holder = node.closest('.card, .brief') || node;
     return getComputedStyle(holder).getPropertyValue('--c');
@@ -1071,15 +1083,14 @@ PAGE_JS = r'''(function () {
   document.addEventListener('click', function (e) {
     var why = e.target.closest('.why-btn[data-sid]');
     if (why) { e.preventDefault(); e.stopPropagation(); openWhy(why.dataset.sid, colorOf(why), why); return; }
-    var card = e.target.closest('.card');
-    if (card && e.target.closest('.back-x')) { flip(card, false); return; }
-    if (card && e.target.closest('.front')) {
-      // the whole tile opens the summary; the headline link keeps its href only
+    var card = e.target.closest('.card[data-sid]');
+    if (card) {
+      // the whole tile opens the summary window; the headline link keeps its href only
       // as a no-JS fallback. Links to other sources still navigate.
       var link = e.target.closest('a');
-      if (!link || link.closest('h3')) {
+      if (!link || link.closest('h3, h4')) {
         if (link) e.preventDefault();
-        flip(card, true);
+        openSummary(card.dataset.sid, colorOf(card), card);
         return;
       }
     }
@@ -1093,9 +1104,7 @@ PAGE_JS = r'''(function () {
   });
   document.addEventListener('keydown', function (e) {
     var why = e.target.closest && e.target.closest('.why-btn.sm');
-    if (why && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); why.click(); return; }
-    if (e.key === 'Escape' && !d.open && !w.open)
-      document.querySelectorAll('.card.flipped').forEach(function (c) { flip(c, false); });
+    if (why && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); why.click(); }
   });
   $('pop-x').addEventListener('click', function () { closeDlg(d); });
   $('why-x').addEventListener('click', function () { closeDlg(w); });
@@ -1170,13 +1179,13 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
         roles.update({id(c): ("thread", th) for c in th["members"]})
     for c in shown_rows:
         first = c["sources"][0]
-        payload[c["sid"]] = dict(why=why_data(c, lang, roles.get(id(c), ("brief", None)), t),
+        payload[c["sid"]] = dict(why=(why_data(c, lang, roles.get(id(c), ("brief", None)), t) if DEBUG else None),
             title=show(c),
             meta=f"{first['name']} · {fmt_date(c['date'], lang)}"
                  + (f" · {t['single']}" if len(c["sources"]) == 1
                     else f" · {len(c['sources'])} {t['sources']}")
-                 + f" · \u2605 {round(score(c))}",
-            text=c.get("summary") or show(c, "snippet"),
+                 + (f" · \u2605 {round(score(c))}" if DEBUG else ""),
+            text=tidy(c.get("summary") or "") or show(c, "snippet"),
             ok=bool(c.get("summary")) or lang != "it", link=first["link"],
             others=[[x["name"], x["link"]] for x in c["sources"][1:6]])
     outlets = len({x["name"] for c in clusters for x in c["sources"]})
@@ -1286,19 +1295,27 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
   }}
   h2.sec::after {{ content:""; flex:1; height:1px;
     background:linear-gradient(90deg, rgba(255,255,255,.14), transparent); }}
-  .spot-grid {{ display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); }}
+  .spot-grid {{ display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); }}
   .card.spotcard .face {{ padding:18px 18px 14px; border-radius:14px; }}
   .card.spotcard .face.front {{ display:flex; flex-direction:column; }}
-  .card.spotcard h4 {{ font:600 15px/1.32 "Space Grotesk"; margin:0 0 8px; }}
+  .card.spotcard h4 {{ font:700 19px/1.25 "Space Grotesk"; margin:0 0 8px; letter-spacing:-.01em; }}
+  .card.spotcard .thumb {{ margin:-18px -18px 14px; }}
+  .thumb.ph {{ display:flex; align-items:center; justify-content:center;
+             background:linear-gradient(135deg, color-mix(in srgb,var(--c) 38%, #0b0d13), color-mix(in srgb,var(--c) 8%, #0b0d13)); }}
+  .thumb.ph img {{ width:96px; height:96px; border-radius:14px; box-shadow:0 10px 30px -8px rgba(0,0,0,.6); }}
+  .spot-a {{ font:700 10.5px/1 Inter; letter-spacing:.2em; text-transform:uppercase; color:var(--c); margin-bottom:10px; }}
   .card.spotcard .spot-s {{ font:500 11.5px/1 Inter; color:var(--faint); margin-bottom:14px; }}
   .card.spotcard footer {{ margin-top:auto; }}
-  .card.spotcard .back-t {{ font-size:15px; }}
-  .card.spotcard .back-b {{ font-size:14px; line-height:1.55; }}
 
-  section.area {{ margin:64px 0 0; scroll-margin-top:24px; }}
-  .area-h {{ display:flex; align-items:baseline; gap:14px; }}
+  section.area {{
+    margin:96px 0 0; padding:0 28px 34px; border-radius:22px; scroll-margin-top:24px; overflow:hidden;
+    border:1px solid color-mix(in srgb,var(--c) 30%, transparent);
+    background:linear-gradient(180deg, color-mix(in srgb,var(--c) 11%, #08090d), color-mix(in srgb,var(--c) 3%, #08090d) 70%);
+  }}
+  .area-h {{ display:flex; align-items:center; gap:14px; margin:0 -28px 14px; padding:22px 28px;
+             background:color-mix(in srgb,var(--c) 22%, #08090d); border-bottom:1px solid color-mix(in srgb,var(--c) 40%, transparent); }}
   .area-h h2 {{
-    font:600 13px/1 Inter; letter-spacing:.22em; text-transform:uppercase; color:var(--c); margin:0;
+    font:700 clamp(26px,4.4vw,38px)/1.1 "Space Grotesk"; letter-spacing:-.02em; color:#fff; margin:0;
   }}
   .area-h .count {{
     font:700 13px/1 "Space Grotesk"; color:var(--faint);
@@ -1309,21 +1326,13 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
     max-width:62ch; font-style:italic;
   }}
   .grid {{ display:grid; gap:16px; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); }}
-  /* The tile is a two-faced card: the news on the front, the summary on the back.
-     The back sits on top of the front, so a closed tile keeps the front's height;
-     when flipped, the script grows it only if the summary needs more room. */
-  .card {{ position:relative; perspective:1500px; transition:transform .22s ease; }}
+  /* The tile opens the summary window; no flipping, so the layout never moves. */
+  .card {{ position:relative; display:flex; cursor:pointer; transition:transform .22s ease; }}
   .card:hover {{ transform:translateY(-4px); }}
-  .card-inner {{
-    position:relative; height:100%; transform-style:preserve-3d;
-    transition:transform .8s cubic-bezier(.2,.75,.2,1), min-height .6s ease;
-  }}
-  .card.flipped .card-inner {{ transform:rotateY(180deg); }}
   .face {{
-    position:relative; overflow:hidden; padding:22px 22px 17px; border-radius:15px;
+    position:relative; flex:1; overflow:hidden; padding:22px 22px 17px; border-radius:15px;
     border:1px solid rgba(255,255,255,.07);
     background:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.014));
-    -webkit-backface-visibility:hidden; backface-visibility:hidden;
     transition:border-color .22s ease, box-shadow .22s ease;
   }}
   .face::before {{ content:""; position:absolute; top:0; bottom:0; left:0; width:3px; background:var(--c); }}
@@ -1331,57 +1340,31 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
     border-color:color-mix(in srgb,var(--c) 45%, transparent);
     box-shadow:0 20px 42px -24px color-mix(in srgb,var(--c) 65%, transparent);
   }}
-  .has-flip {{ align-items:start; }}
   .card.featured {{ grid-column:span 2; }}
   .card.featured .face {{
     padding:28px;
     background:linear-gradient(135deg, color-mix(in srgb,var(--c) 12%, transparent), rgba(255,255,255,.014) 62%);
   }}
-  .face.front {{ height:100%; box-sizing:border-box; cursor:pointer; }}
-  .face.front .more-srcs a {{ cursor:alias; }}
-  .face.back, .card.featured .face.back {{
-    position:absolute; inset:0; overflow:auto; box-sizing:border-box;
-    transform:rotateY(180deg); display:flex; flex-direction:column;
-    background:linear-gradient(160deg, color-mix(in srgb,var(--c) 18%, #0b0d13), #0b0d13 72%);
-  }}
-  .card .back-k {{ font:600 10.5px/1 Inter; letter-spacing:.22em; text-transform:uppercase; color:var(--c); }}
-  .card .back-t {{ font:600 17px/1.3 "Space Grotesk"; margin:10px 0 4px; letter-spacing:-.01em; }}
-  .card.featured .back-t {{ font-size:21px; }}
-  .card .back-m {{ font:500 11.5px/1 Inter; color:var(--faint); margin:0 0 14px; }}
-  .card .back-b {{ font:400 15px/1.62 "Newsreader", Georgia, serif; color:#d3d8e4; margin:0;
-                   flex:none; /* never shrink: the tile grows to fit the summary instead */ }}
-  .card .back-n {{ font:italic 400 12.5px/1.5 Inter; color:var(--faint); margin:10px 0 0; }}
-  .card .back-srcs {{ margin:12px 0 0; font:500 11.5px/1.8 Inter; color:var(--faint); }}
-  .card .back-srcs a {{ color:var(--mute); margin-right:10px; }}
-  .card .back-act {{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:auto; padding-top:16px; }}
-  .card .back-x {{ margin-left:auto; display:inline-flex; align-items:center; gap:6px; color:#e6e8ef;
-                   font:600 12.5px/1 Inter; cursor:pointer; padding:8px 12px; border-radius:999px;
-                   border:1px solid rgba(255,255,255,.2); background:rgba(255,255,255,.05); }}
-  .card .back-x:hover {{ background:rgba(255,255,255,.12); }}
-  .rv {{ opacity:0; transform:translateY(8px); transition:opacity .45s ease, transform .45s ease; }}
-  .card.flipped .rv {{ opacity:1; transform:none; }}
-  .card.flipped .rv.d1 {{ transition-delay:.35s; }}
-  .card.flipped .rv.d2 {{ transition-delay:.47s; }}
-  .card.flipped .rv.d3 {{ transition-delay:.59s; }}
   @media (prefers-reduced-motion:reduce) {{
-    .card, .card-inner, .face, .rv, .cyc {{ transition:none !important; }}
+    .card, .face {{ transition:none !important; }}
     dialog.pop[open]::backdrop {{ animation:none; }}
   }}
   .card h3 {{ font:600 18px/1.3 "Space Grotesk"; margin:0 42px 10px 0; letter-spacing:-.01em; }}
-  .card.featured h3 {{ font-size:23px; }}
+  .card.featured h3 {{ font-size:26px; line-height:1.22; }}
   .card h3 a {{ color:#fff; text-decoration:none; }}
   .card h3 a:hover {{ color:var(--c); }}
-  .card p {{ margin:0 0 15px; color:var(--mute); font-size:14px; line-height:1.58; }}
-  .card footer {{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12px; color:var(--faint); }}
+  .card p {{ margin:0 0 15px; color:var(--mute); font-size:14px; line-height:1.58;
+            display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }}
+  .card.featured p {{ -webkit-line-clamp:4; font-size:15px; }}
+  .card footer {{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12px; color:var(--faint); margin-top:auto; }}
+  .face.front {{ display:flex; flex-direction:column; }}
   .src {{ color:#cfd4e0; font-weight:500; }}
-  /* the flip control: a pill with a cycle sign, so it reads as "turns the card" */
+  /* the one real control on a tile: it opens the summary */
   .go {{ margin-left:auto; display:inline-flex; align-items:center; gap:6px; color:#fff;
          font:600 12px/1 Inter; padding:6px 11px; border-radius:999px; cursor:pointer;
          border:1px solid color-mix(in srgb,var(--c) 55%, transparent);
          background:color-mix(in srgb,var(--c) 16%, transparent); transition:background .2s ease; }}
   .go:hover {{ background:color-mix(in srgb,var(--c) 32%, transparent); }}
-  .cyc {{ display:inline-block; font-size:15px; line-height:1; transition:transform .5s ease; }}
-  .go:hover .cyc, .back-x:hover .cyc {{ transform:rotate(180deg); }}
   .more-srcs {{
     display:inline-flex; gap:6px; margin:0 0 13px; padding:0; list-style:none; flex-wrap:wrap;
   }}
@@ -1440,9 +1423,7 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
   .b-sub {{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; font:500 11.5px/1.4 Inter;
             color:var(--faint); overflow-wrap:anywhere; }}
   .go.sm {{ flex:none; margin-left:0; padding:5px 10px; font-size:11px; }}
-  .go.sm .cyc {{ font-size:13px; }}
   .brief:hover .go {{ background:color-mix(in srgb,var(--c) 32%, transparent); }}
-  .brief:hover .cyc {{ transform:rotate(180deg); }}
   .more-note {{ font:400 13px/1 Inter; color:var(--faint); margin:20px 0 0; font-style:italic; }}
   @media (max-width:760px) {{ .card.featured {{ grid-column:span 1; }} .card.featured .face {{ padding:22px; }} }}
   @media (max-width:560px) {{
@@ -1451,6 +1432,8 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
     .b-main {{ flex-basis:calc(100% - 20px); }}
     .go.sm {{ margin-left:17px; }}
     .wrap {{ padding:0 18px; }}
+    section.area {{ padding:0 14px 24px; }}
+    .area-h {{ margin:0 -14px 14px; padding:18px 14px; }}
     .hero {{ margin:0 -18px; }}
   }}
   dialog.pop {{
@@ -1589,6 +1572,9 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
     return page.encode("ascii", "xmlcharrefreplace").decode("ascii")
 
 
+DEBUG = bool(os.environ.get("JEV_DEBUG"))
+
+
 def thumb_html(c: dict, lang: str, big: bool = False) -> str:
     """Story illustration, or nothing. Self-hiding: publisher CDNs sometimes
     refuse a hotlink, and a card with a torn-off image looks worse than a card
@@ -1648,35 +1634,6 @@ def weights_block(t: dict, rated: bool, lang: str) -> str:
             f'<ul>{"".join(rows)}</ul></details>')
 
 
-def back_face(c: dict, lang: str, t: dict) -> str:
-    """The reverse of a card: the summary, other sources, the link to the original."""
-    esc = html.escape
-    src = c["sources"]
-    first = src[0]
-    body = c.get("summary") or show(c, "snippet")
-    has_summary = bool(c.get("summary")) or lang != "it"
-    others = "".join(
-        f'<a href="{esc(x["link"])}" target="_blank" rel="noopener">{esc(x["name"])}</a>'
-        for x in src[1:6])
-    single = f" &middot; {esc(t['single'])}" if len(src) == 1 else ""
-    note = "" if has_summary else f'<p class="back-n rv d1">{esc(t["no_sum"])}</p>'
-    srcs = (f'<div class="back-srcs rv d2">{esc(t["other_src"])}: {others}</div>'
-            if others else "")
-    back = f"""<div class="face back" inert aria-hidden="true">
-          <div class="back-k">{esc(t['summary'])}</div>
-          <h3 class="back-t">{esc(show(c))}</h3>
-          <div class="back-m">{esc(first['name'])} &middot; {esc(fmt_date(c['date'], lang))}{single}</div>
-          <p class="back-b rv d1">{esc(body)}</p>
-          {note}
-          {srcs}
-          <div class="back-act rv d3">
-            <a class="pop-link" href="{esc(first['link'])}" target="_blank" rel="noopener">{esc(t['orig'])} &rarr;</a>
-            <button type="button" class="back-x"><span class="cyc" aria-hidden="true">&#8635;</span> {esc(t['back_label'])}</button>
-          </div>
-        </div>"""
-    return back
-
-
 def why_data(c: dict, lang: str, role: tuple, t: dict) -> dict:
     """Everything the "Why?" window shows about one story, localised: where it sits, which
     area and why (probabilities), the type of piece, every Jev question with its weight and
@@ -1721,20 +1678,10 @@ def why_data(c: dict, lang: str, role: tuple, t: dict) -> dict:
             "rel": round(c["relevance"], 2) if c.get("relevance") is not None else None}
 
 
-def cost_chip(c: dict) -> str:
-    """No per-card price tag: the cost only appears in the edition footer."""
-    return ""
-
-
-def ptype_chip(c: dict) -> str:
-    """A small label for anything that is not plain reporting (opinion, press release, ...)."""
-    pt = c.get("ptype")
-    if not pt or pt["choice"] == "report" or pt["p"].get(pt["choice"], 0) < 0.5:
-        return ""
-    return f'<span class="ptype">{html.escape(RATE.PIECE_TYPES[pt["choice"]][0 if CURRENT_LANG == "it" else 1])}</span>'
-
-
 def why_button(c: dict, t: dict, small: bool = False) -> str:
+    """The score breakdown is for us, not for readers: only with JEV_DEBUG=1."""
+    if not DEBUG:
+        return ""
     esc = html.escape
     if small:
         return (f'<span class="why-btn sm" role="button" tabindex="0" data-sid="{esc(c.get("sid", ""))}" '
@@ -1743,30 +1690,36 @@ def why_button(c: dict, t: dict, small: bool = False) -> str:
             f'title="{esc(t["why_tip"])}">&#9432; {esc(t["why_btn"])}</button>')
 
 
+def spot_banner(c: dict) -> str:
+    """The picture of an "In evidenza" tile. Always a 16:9 banner: the photo, or, when
+    the news only has a 92px thumbnail or none, a tinted block (thumbnail centred)."""
+    row = c.get("img") or {}
+    url = row.get("url") or ""
+    if url and not (row.get("lowres") or "gstatic.com" in url):
+        return thumb_html(c, CURRENT_LANG)
+    esc = html.escape
+    mini = (f'<img src="{esc(url)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer"'
+            f' onerror="this.remove()">') if url else ""
+    return f'<div class="thumb ph">{mini}</div>'
+
+
 def spot_html(c: dict, color: str, lang: str, t: dict) -> str:
-    """An "In evidenza" tile. Same two-faced card as the grid, same badges, same
-    flip: clicking it shows the summary, it no longer jumps to the article."""
+    """An "In evidenza" tile: area, picture, big headline. Click opens the summary."""
     esc = html.escape
     src = c["sources"]
-    chip = (f'<span class="solo">{esc(t["unverified" if c.get("penalty") else "single"])}</span>'
-            if len(src) == 1 else f'<span class="badge"><b>{len(src)}</b> {esc(t["sources"])}</span>')
+    area = next((a[lang][0] for a in AREAS if a["key"] == c["area"]), "")
     return f"""
-        <article class="card spotcard" style="--c:{color}">
-          <div class="card-inner">
+        <article class="card spotcard" style="--c:{color}" data-sid="{esc(c.get('sid', ''))}">
             <div class="face front">
+              {spot_banner(c)}
+              <div class="spot-a">{esc(area)}</div>
               <h4>{esc(show(c))}</h4>
               <div class="spot-s">{esc(src[0]['name'])} &middot; {esc(fmt_date(c['date'], lang))}</div>
               <footer>
-                {chip}
-                <span class="badge score" title="{esc(t['score_tip'])}">&#9733; {round(score(c))}</span>
-                {cost_chip(c)}
-                {ptype_chip(c)}
                 {why_button(c, t)}
-                <button type="button" class="go" data-sid="{esc(c.get('sid', ''))}" title="{esc(t['flip_tip'])}"><span class="cyc" aria-hidden="true">&#8635;</span> {esc(t['read'])}</button>
+                <span class="go" title="{esc(t['flip_tip'])}">{esc(t['read'])} &rarr;</span>
               </footer>
             </div>
-            {back_face(c, lang, t)}
-          </div>
         </article>"""
 
 
@@ -1774,37 +1727,20 @@ def card_html(c, lang, featured=False, t=None, image=True) -> str:
     esc = html.escape
     src = c["sources"]
     first = src[0]
-    extra = ""
-    if len(src) > 1:
-        links = "".join(
-            f'<li><a href="{esc(s["link"])}" target="_blank" rel="noopener">{esc(s["name"])}</a></li>'
-            for s in src[1:6]
-        )
-        rest = len(src) - 6
-        more = f'<li class="more-n">+{rest}</li>' if rest > 0 else ""
-        extra = f'<ul class="more-srcs">{links}{more}</ul>'
-    back = back_face(c, lang, t)
+    more = f"<span>&middot;</span><span>{len(src)} {esc(t['sources'])}</span>" if len(src) > 1 else ""
     return f"""
-      <article class="card{' featured' if featured else ''}" style="--c:{c['color']}">
-        <div class="card-inner">
+      <article class="card{' featured' if featured else ''}" style="--c:{c['color']}" data-sid="{esc(c.get('sid', ''))}">
         <div class="face front">
         {thumb_html(c, lang, big=featured) if image else ''}
-        {extra}
         <h3><a href="{esc(first['link'])}" target="_blank" rel="noopener" title="{esc(c['title'])}">{esc(show(c))}</a></h3>
         <p>{esc(show(c, 'snippet'))}</p>
         <footer>
           <span class="src">{esc(first['name'])}</span>
           <span>&middot;</span><span>{esc(fmt_date(c['date'], lang))}</span>
-          {f'<span class="solo">{esc(t["unverified" if c.get("penalty") else "single"])}</span>' if len(src) == 1 else ''}
-          {f'<span class="badge"><b>{len(src)}</b> {esc(t["sources"])}</span>' if len(src) > 1 else ''}
-          <span class="badge score" title="{esc(t['score_tip'])}">&#9733; {round(score(c))}</span>
-          {cost_chip(c)}
-          {ptype_chip(c)}
+          {more}
           {why_button(c, t)}
-          <button type="button" class="go" data-sid="{esc(c.get('sid', ''))}" title="{esc(t['flip_tip'])}"><span class="cyc" aria-hidden="true">&#8635;</span> {esc(t['read'])}</button>
+          <span class="go" title="{esc(t['flip_tip'])}">{esc(t['read'])} &rarr;</span>
         </footer>
-        </div>
-        {back}
         </div>
       </article>"""
 
@@ -1816,8 +1752,7 @@ def brief_html(c, lang, t=None, image=True) -> str:
     esc = html.escape
     src = c["sources"]
     first = src[0]
-    chip = (f'<span class="solo">{esc(t["unverified" if c.get("penalty") else "single"])}</span>'
-            if len(src) == 1 else f'<span class="badge"><b>{len(src)}</b> {esc(t["sources"])}</span>')
+    more = f" &middot; {len(src)} {esc(t['sources'])}" if len(src) > 1 else ""
     row = c.get("img") or {}
     pic = (f'<img class="b-thumb" src="{esc(row["url"])}" alt="" loading="lazy"'
            f' decoding="async" referrerpolicy="no-referrer"'
@@ -1829,15 +1764,11 @@ def brief_html(c, lang, t=None, image=True) -> str:
           <span class="b-main">
             <span class="b-txt" title="{esc(c['title'])}">{esc(show(c))}</span>
             <span class="b-sub">
-              <span class="b-src">{esc(first['name'])} &middot; {esc(fmt_date(c['date'], lang))}</span>
-              {chip}
-              <span class="badge score" title="{esc(t['score_tip'])}">&#9733; {round(score(c))}</span>
-              {cost_chip(c)}
-              {ptype_chip(c)}
+              <span class="b-src">{esc(first['name'])} &middot; {esc(fmt_date(c['date'], lang))}{more}</span>
               {why_button(c, t, small=True)}
             </span>
           </span>
-          <span class="go sm"><span class="cyc" aria-hidden="true">&#8635;</span> {esc(t['read'])}</span>
+          <span class="go sm">{esc(t['read'])} &rarr;</span>
         </a>"""
 
 
@@ -1982,6 +1913,12 @@ def main() -> None:
     if do_jev:
         jev_judge(clusters, prefix, TOPIC_AI)
 
+    METER.stage("fili")
+    threads = find_threads_llm(clusters, model=model, cache_path=f"{prefix}.threads.json", quiet=True)
+    if not threads:
+        threads = find_threads(clusters)
+    print(f"  fili: {len(threads)}" + "".join(f"\n    · {t['title']} ({len(t['members'])})" for t in threads) + "\n")
+
     METER.stage("immagini")
     if images != "off":
         import images as IMG
@@ -2089,7 +2026,7 @@ def main() -> None:
 
     open(hp, "w").write(
         render_html(clusters, meta, lang, intro, generated, n_main, n_more,
-                    hero, images))
+                    hero, images, threads))
     open(mp, "w").write(
         render_md(clusters, meta, lang, intro, generated, n_main, n_more))
     print(f"  scritto {hp}\n  scritto {mp}\n")

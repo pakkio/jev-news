@@ -109,7 +109,7 @@ def save_cache(path: str, cache: dict) -> None:
     os.replace(tmp, path)
 
 
-def call(key: str, model: str, payload: str, retries: int = 3, timeout: int = 90) -> dict:
+def call(key: str, model: str, payload: str, retries: int = 3, timeout: int = 180) -> dict:
     url, _, model_id = provider(model)
     body = {"model": model_id, "temperature": 0,
             "messages": [{"role": "user", "content": payload}]}

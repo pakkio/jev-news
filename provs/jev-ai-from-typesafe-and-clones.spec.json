@@ -1,0 +1,136 @@
+{
+ "title": "System One models: Jev e dintorni",
+ "kicker": "Rassegna · settimana del",
+ "sub": "{n} storie {window} su TypeSafe, Jev e i modelli 'System One'.",
+ "topic": "TypeSafe's Jev and System One models: small, fast AI models that make typed, calibrated decisions (classification, scoring, yes/no judgments), and similar alternatives",
+ "areas": [
+  {
+   "key": "typesafe_jev",
+   "what": "News about TypeSafe the company and its Jev model, funding, launches, docs, benchmarks",
+   "not_for": "generic type-safe programming languages, TypeScript",
+   "examples": [
+    "TypeSafe launches Jev, a System One model for typed decisions",
+    "Jev vs GPT for classification: latency and cost",
+    "TypeSafe raises seed round for System One AI",
+    "How developers use Jev to route support tickets"
+   ],
+   "name": "TypeSafe e Jev",
+   "note": "Novita' sull'azienda TypeSafe e sul modello Jev.",
+   "pat": "\\b(typesafe|jev)\\b",
+   "queries": [
+    [
+     "TypeSafe Jev",
+     null
+    ],
+    [
+     "TypeSafe AI System One",
+     null
+    ],
+    [
+     "Jev model TypeSafe",
+     null
+    ],
+    [
+     "TypeSafe Jev modello IA",
+     "it"
+    ]
+   ]
+  },
+  {
+   "key": "system_one_models",
+   "what": "'System One' style models: fast, intuitive, calibrated AI decision models as an alternative to slow LLM reasoning",
+   "not_for": "unrelated 'system one' uses (Formula, cars, hardware)",
+   "examples": [
+    "System 1 vs System 2 thinking in AI models",
+    "Fast intuitive AI models for classification",
+    "Small models that output calibrated probabilities",
+    "Kahneman's System 1 applied to LLM design"
+   ],
+   "name": "Modelli System One",
+   "note": "Modelli veloci e 'intuitivi' accanto agli LLM che ragionano.",
+   "pat": "\\bsystem[ -]?(one|1)\\b",
+   "queries": [
+    [
+     "System One AI models",
+     null
+    ],
+    [
+     "System 1 System 2 AI fast intuitive models",
+     null
+    ],
+    [
+     "calibrated probabilities small language model classification",
+     null
+    ],
+    [
+     "modelli IA System One veloci",
+     "it"
+    ]
+   ]
+  },
+  {
+   "key": "clones_alternatives",
+   "what": "Alternatives and imitators of Jev: other small typed-decision or classifier models and tools",
+   "not_for": "big general LLM launches without a decision/classifier angle",
+   "examples": [
+    "Open-source alternative to Jev for typed decisions",
+    "Small classifier models replace LLM calls in agents",
+    "Structured output models for routing and scoring",
+    "Zero-shot classification model released"
+   ],
+   "name": "Alternative e cloni",
+   "note": "Modelli e strumenti simili a Jev per decisioni tipizzate.",
+   "pat": "\\b(classif|alternative|clone|structured output|zero-shot)\\w*",
+   "queries": [
+    [
+     "Jev alternative AI model",
+     null
+    ],
+    [
+     "small model replaces LLM classification agents routing",
+     null
+    ],
+    [
+     "zero-shot classifier typed decisions open source",
+     null
+    ],
+    [
+     "alternativa a Jev modello classificazione",
+     "it"
+    ]
+   ]
+  },
+  {
+   "key": "other_related_topics",
+   "what": "Other news about typed AI decisions, agents' decision layers, TypeSafe ecosystem not covered above",
+   "not_for": "",
+   "examples": [
+    "Agents need a fast decision layer before generation",
+    "LLM-as-judge replaced by calibrated scorer",
+    "Typed outputs for AI agents",
+    "TypeSafe cookbook examples"
+   ],
+   "name": "Altro",
+   "note": "Altre notizie correlate.",
+   "pat": ".*",
+   "queries": [
+    [
+     "typed decisions AI agents",
+     null
+    ],
+    [
+     "fast decision layer LLM agents",
+     null
+    ],
+    [
+     "TypeSafe cookbook",
+     null
+    ],
+    [
+     "decisioni tipizzate agenti IA",
+     "it"
+    ]
+   ]
+  }
+ ]
+}
