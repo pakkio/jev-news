@@ -386,6 +386,8 @@ def tidy(text: str) -> str:
     sentences only: drops a leading fragment and a trailing unfinished sentence.
     When no whole sentence can be saved, the fragment stays, marked with an ellipsis."""
     t = " ".join((text or "").split())
+    if not t:
+        return ""
     cut = bool(re.search(r"(\.\.\.|\u2026)$", t))
     t = re.sub(r"^(\.\.\.|\u2026)\s*", "", t)
     if t[:1].islower():                              # starts mid-sentence
@@ -393,6 +395,8 @@ def tidy(text: str) -> str:
         if m and len(t) - m.end() >= 40:
             t = t[m.end():]
     t = re.sub(r"\s*(\.\.\.|\u2026)$", "", t)
+    if not t:
+        return ""
     if cut or not re.search(r"[.!?]['\")\u00bb\u201d]*$", t):
         ends = [m.end() for m in _END.finditer(t)]
         if ends and ends[-1] >= 40:
