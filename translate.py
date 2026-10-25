@@ -14,15 +14,17 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from meter import METER
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_MODEL = os.environ.get("LLM_MODEL", "openrouter/free")
+DEFAULT_MODEL = os.environ.get("LLM_MODEL", "opencodego:deepseek-v4.1-flash")
 API = "https://openrouter.ai/api/v1/chat/completions"
 # "<provider>:<model>" selects another OpenAI-compatible endpoint; no prefix = OpenRouter
 PROVIDERS = {"opencodego": ("https://opencode.ai/zen/go/v1/chat/completions",
@@ -90,6 +92,9 @@ def load_key(model: str = DEFAULT_MODEL) -> str:
 
 
 SESSION = str(uuid.uuid4())
+# at most this many requests in flight at once, across every stage and thread
+GATE = threading.BoundedSemaphore(max(1, int(os.environ.get("LLM_CONCURRENCY", "16"))))
+RETRY_HTTP = (408, 429, 500, 502, 503, 504, 529)
 
 
 def digest(title: str, snippet: str) -> str:
@@ -99,7 +104,7 @@ def digest(title: str, snippet: str) -> str:
 def load_cache(path: str) -> dict:
     if os.path.exists(path):
         try:
-            return json.load(open(path))
+            return json.load(open(path, encoding="utf-8"))
         except (ValueError, OSError):
             return {}
     return {}
@@ -107,7 +112,7 @@ def load_cache(path: str) -> dict:
 
 def save_cache(path: str, cache: dict) -> None:
     tmp = f"{path}.tmp"
-    with open(tmp, "w") as fh:
+    with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(cache, fh, ensure_ascii=False, indent=0)
     os.replace(tmp, path)
 
@@ -129,7 +134,7 @@ def call(key: str, model: str, payload: str, retries: int = 3, timeout: int = 18
             # `timeout` is a per-read socket timeout; the deadline makes it a hard cap on
             # the whole attempt, so a server trickling chunks cannot stall us forever
             deadline = time.monotonic() + timeout
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with GATE, urllib.request.urlopen(req, timeout=timeout) as r:
                 chunks = []
                 while chunk := r.read(8192):
                     chunks.append(chunk)
@@ -139,13 +144,19 @@ def call(key: str, model: str, payload: str, retries: int = 3, timeout: int = 18
                 METER.llm(reply.get("usage"))
                 return reply["choices"][0]["message"]["content"] or ""
         except urllib.error.HTTPError as e:
-            if e.code in (429, 500, 502, 503) and attempt < retries - 1:
+            detail = e.read()[:200]
+            # a 400 "upstream failed / unavailable" is the provider's hiccup, not our request
+            transient = e.code in RETRY_HTTP or (e.code == 400 and
+                                                 re.search(rb"upstream|unavailable", detail, re.I))
+            if transient and attempt < retries - 1:
+                METER.note(f"http{e.code}")
                 print(f"  LLM HTTP {e.code}, retry {attempt + 2}/{retries}...", file=sys.stderr)
                 time.sleep(2 ** (attempt + 1))
                 continue
-            raise RuntimeError(f"OpenRouter HTTP {e.code}: {e.read()[:120]!r}")
+            raise RuntimeError(f"LLM HTTP {e.code}: {detail[:120]!r}")
         except Exception as e:
             if attempt < retries - 1:
+                METER.note("retry")
                 print(f"  LLM call failed ({type(e).__name__}: {e}), retry {attempt + 2}/{retries}...",
                       file=sys.stderr)
                 time.sleep(2 ** (attempt + 1))
@@ -170,45 +181,58 @@ def extract_json(text: str) -> dict:
 
 
 def translate(pairs: list, model: str = DEFAULT_MODEL, batch: int = 10,
-              cache_path: str = None, quiet: bool = False) -> tuple:
-    """pairs: [{"title":..., "snippet":...}] -> (cache dict, stats dict)."""
+              cache_path: str = None, quiet: bool = False, meter: bool = True) -> tuple:
+    """pairs: [{"title":..., "snippet":...}] -> (cache dict, stats dict).
+    Batches run in parallel (TRANSLATE_WORKERS); meter=False when another stage
+    is already driving the progress bar."""
     key = load_key(model)
     cache_path = cache_path or os.path.join(HERE, "ai-news.it.json")
     cache = load_cache(cache_path)
-    todo = []
+    todo, seen = [], set()
     for p in pairs:
         d = digest(p["title"], p.get("snippet", ""))
-        if d not in cache or bad(cache[d]):
+        if (d not in cache or bad(cache[d])) and d not in seen:
+            seen.add(d)
             todo.append((d, p))
     stats = {"cached": len(pairs) - len(todo), "translated": 0, "failed": 0}
+    if meter:
+        METER.set_total(len(todo))
 
-    METER.set_total(len(todo))
-    for i in range(0, len(todo), batch):
-        chunk = todo[i:i + batch]
-        METER.tick(len(chunk))
+    def run(chunk):
         numbered = "\n".join(
             f'{j}. "t": {json.dumps(p["title"], ensure_ascii=False)},'
             f' "s": {json.dumps(p.get("snippet", ""), ensure_ascii=False)}'
             for j, (_, p) in enumerate(chunk))
-        try:
-            got = extract_json(call(key, model, PROMPT % numbered))
-        except Exception as e:  # noqa: BLE001
-            print(f"  ! batch failed: {str(e)[:100]}", file=sys.stderr)
-            stats["failed"] += len(chunk)
-            continue
-        for j, (d, p) in enumerate(chunk):
-            row = got.get(str(j)) or got.get(j)
-            if not row:
-                stats["failed"] += 1
+        return extract_json(call(key, model, PROMPT % numbered))
+
+    chunks = [todo[i:i + batch] for i in range(0, len(todo), batch)]
+    workers = max(1, int(os.environ.get("TRANSLATE_WORKERS", "6")))
+    done = 0
+    with ThreadPoolExecutor(workers) as pool:
+        futures = {pool.submit(run, ch): ch for ch in chunks}
+        for f in as_completed(futures):
+            chunk = futures[f]
+            if meter:
+                METER.tick(len(chunk))
+            try:
+                got = f.result()
+            except Exception as e:  # noqa: BLE001
+                print(f"  ! batch failed: {str(e)[:100]}", file=sys.stderr)
+                stats["failed"] += len(chunk)
                 continue
-            cache[d] = {"t": row.get("t") or p["title"],
-                        "s": row.get("s") or p.get("snippet", "")}
-            stats["translated"] += 1
-        save_cache(cache_path, cache)
-        if not quiet:
-            done = min(i + batch, len(todo))
-            print(f"  tradotte {done}/{len(todo)} "
-                  f"(cache: {stats['cached']}, fallite: {stats['failed']})")
+            for j, (d, p) in enumerate(chunk):
+                row = got.get(str(j)) or got.get(j)
+                if not row:
+                    stats["failed"] += 1
+                    continue
+                cache[d] = {"t": row.get("t") or p["title"],
+                            "s": row.get("s") or p.get("snippet", "")}
+                stats["translated"] += 1
+            save_cache(cache_path, cache)
+            done += len(chunk)
+            if not quiet:
+                print(f"  tradotte {done}/{len(todo)} "
+                      f"(cache: {stats['cached']}, fallite: {stats['failed']})")
     return cache, stats
 
 

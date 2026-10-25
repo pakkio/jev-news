@@ -56,6 +56,8 @@ class Meter:
         self.llm_in = self.llm_out = self.llm_calls = 0
         self.serper_credits = 0
         self.serper_kinds = {}
+        self.notes = {}             # live counters: 429s, retries, articles read...
+        self.laps = {}              # phase -> [count, total seconds]
         self._stop = None
 
     # ------------------------------------------------------------ run ------
@@ -99,6 +101,23 @@ class Meter:
     def tick(self, n: int = 1) -> None:
         with self.lock:
             self.count += n
+
+    def note(self, key: str, n: int = 1) -> None:
+        with self.lock:
+            self.notes[key] = self.notes.get(key, 0) + n
+
+    def lap(self, phase: str, seconds: float) -> None:
+        """Time one unit of a phase (a fetch, a write, a review) for the live averages."""
+        with self.lock:
+            row = self.laps.setdefault(phase, [0, 0.0])
+            row[0] += 1
+            row[1] += seconds
+
+    def live(self) -> str:
+        """Counters and per-phase averages, for the status line."""
+        parts = [f"{k} {v}" for k, v in sorted(self.notes.items())]
+        parts += [f"{k} {t / n:.1f}s x{n}" for k, (n, t) in self.laps.items() if n]
+        return " | " + ", ".join(parts) if parts else ""
 
     # --------------------------------------------------------- costs -------
     def jev(self, usage) -> None:
@@ -161,7 +180,8 @@ class Meter:
             return (f"  PROGRESSO [{bar}] {frac:4.0%} | {clock(elapsed)} trascorsi, ~{clock(left)} mancanti"
                     f" | {where} | Jev ${c['jev']:.4f} ({self.jev_in // 1000}k tok)"
                     f" | Serper {self.serper_credits} crediti (~${c['serper']:.3f})"
-                    f" | LLM {(self.llm_in + self.llm_out) // 1000}k tok | totale ~${c['total']:.3f}")
+                    f" | LLM {(self.llm_in + self.llm_out) // 1000}k tok | totale ~${c['total']:.3f}"
+                    + self.live())
 
     def report(self) -> None:
         if self.t0 is not None:

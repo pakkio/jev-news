@@ -17,6 +17,7 @@ import re
 import sys
 import unicodedata
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import rate as RATE
@@ -26,14 +27,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # ---------------------------------------------------------------- aree ------
 # L'ordine è editoriale: dall'area che pesa di più a quella di servizio.
-# Ogni area ha nome bilingue, colore d'accento e una nota che spiega perché esiste.
+# Un colore per area, a tinte distanti sulla ruota (verde, ciano, viola, magenta, rosso, giallo)
+# e di luminosita' simile, cosi' nessuna coppia si confonde su sfondo scuro; il perche' di ciascuno
+# e' in explain_sections.py. Ogni area ha nome bilingue, colore d'accento e una nota che spiega perché esiste.
 AREAS = [
     dict(
         key="business", color="#9ece6a",
-        jev={"what": "Money and deals: funding rounds, valuations, acquisitions, mergers, earnings, IPOs, "
-                     "layoffs and market moves involving AI companies; also chips, GPUs, data centres and "
-                     "compute capacity when the story is about investment, supply or cost.",
-             "not_for": "A product or model launch with no financial angle, or research results.",
+        jev={"what": "Money and commercial moves of AI companies: funding rounds, valuations, acquisitions "
+                     "and mergers, IPOs, earnings and revenue, partnerships and large customer contracts, "
+                     "pricing, layoffs and hiring; also chips, GPUs, data centres and compute capacity when "
+                     "the story is about investment, supply or cost.",
+             "not_for": "A launch with no financial angle, research results, antitrust cases, fines or "
+                        "blocked deals (Regulation), or the broad effect of AI on jobs (Frontiers).",
              "examples": ["AI startup raises $350 million", "Anthropic files for IPO", "Levée de fonds record pour une start-up IA",
                           "Nvidia-Aktie steigt nach Quartalszahlen", "Centros de datos de IA en España"]},
         it=('Business',
@@ -60,7 +65,7 @@ AREAS = [
         pat=r".*",  # fallback
     ),
     dict(
-        key="design", color="#bb9af7",
+        key="design", color="#e86ad9",
         jev={"what": "AI in design and creative work: UX and product design, generative image, video and "
                      "music tools, design software, creative industries, and how AI changes designers' jobs.",
              "not_for": "Funding news, model benchmarks, government rules, AI courses or tool round-ups for general users.",
@@ -74,7 +79,7 @@ AREAS = [
             r"illustrat\w*|image generat\w*|video generat\w*|sora|runway)\b",
     ),
     dict(
-        key="regulation", color="#f4a261",
+        key="regulation", color="#ff5a5f",
         jev={"what": "Government and public-sector action about AI: laws, regulation, courts and lawsuits, "
                      "antitrust, export controls, safety and ethics governance, official statements on rules.",
              "not_for": "A company's product or funding news, research results, op-eds and opinion essays, or a bare topic page.",
@@ -89,7 +94,7 @@ AREAS = [
             r"safety|governance|antitrust|doj|ftc|eu ai act|ai act|commission|executive order)\b",
     ),
     dict(
-        key="fun", color="#e0af68",
+        key="fun", color="#f5d547",
         jev={"what": "Light, curious or funny AI stories: oddities, memes, viral moments, games, "
                      "gadgets, pop culture, human-interest anecdotes.",
              "not_for": "Serious business, research or regulation news; sexual or spam content, companion chatbots, SEO listicles.",
@@ -103,7 +108,7 @@ AREAS = [
             r"gaming|toy|toys|pizza|dog|cat)\b",
     ),
     dict(
-        key="models", color="#7aa2f7",
+        key="models", color="#bb9af7",
         jev={"what": "Releases of AI models and products from AI labs, versions and updates, "
                      "benchmarks, open-source releases, and unconfirmed rumors or leaks about upcoming models.",
              "not_for": "Funding and acquisitions, office or productivity software, news-industry pilots, or government rules.",
@@ -265,6 +270,34 @@ def tokens(title: str) -> set:
 # be a list of English words here; it could not work for French, German or Spanish.
 
 
+BUMP = 25     # points a revision adds or removes: about one day of freshness
+
+
+def revise(clusters: list, shown: list, review: dict, digest) -> None:
+    """Applies the final revision in place: a card that is not about AI is dropped, one filed
+    in the wrong section is moved, and weighty or marginal news is promoted or demoted
+    (a score bump, so the usual ranking still decides the order)."""
+    colors = {a["key"]: a["color"] for a in AREAS}
+    dropped = moved = up = down = 0
+    for c in shown:
+        r = review.get(digest(c["title"]))
+        if not r:
+            continue
+        if not r["ia"]:
+            c["drop"] = True
+            dropped += 1
+            continue
+        if r["area"] and r["area"] != c["area"]:
+            c["area"], c["color"] = r["area"], colors[r["area"]]
+            moved += 1
+        if r["rilievo"] == "su":
+            c["bump"], up = BUMP, up + 1
+        elif r["rilievo"] == "giu":
+            c["bump"], down = -BUMP, down + 1
+    clusters[:] = [c for c in clusters if not c.get("drop")]
+    print(f"  revisione: {dropped} fuori tema, {moved} spostate, {up} promosse, {down} retrocesse\n")
+
+
 def score(c: dict) -> float:
     """Importance: freshness, breadth of coverage, snippet, and Jev's rating when present."""
     s = max(0.0, 30 - hours(c["date"]) / 4)          # decays over ~5 days
@@ -272,7 +305,7 @@ def score(c: dict) -> float:
     s += min(len(c["snippet"]) / 45, 6)               # informative snippet
     if c.get("jev"):
         s += RATE.points(c["jev"])                    # meaning, not keywords
-    return s - c.get("penalty", 0)       # e.g. a single source nobody could confirm
+    return s - c.get("penalty", 0) + c.get("bump", 0)   # penalty: single unconfirmed source; bump: revision
 
 
 MESI_IT = ("gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
@@ -379,11 +412,13 @@ def ia(text: str) -> str:
 def show(c: dict, field: str = "title") -> str:
     """Translated text when available, English otherwise; headlines are cleaned
     of site furniture."""
-    text = c.get(f"{field}_it") or c[field]
+    own = c.get(f"{field}_it")
+    text = own or c[field]
+    fix = ia if own else (lambda t: t)    # "AI" -> "IA" only on Italian text, never on English
     if field == "title" and c.get("sources"):
-        return ia(clean_title(text, c["sources"][0]["name"]))
+        return fix(clean_title(text, c["sources"][0]["name"]))
     if field == "snippet":
-        return ia(tidy(text))
+        return fix(tidy(text))
     return text
 
 
@@ -1861,7 +1896,7 @@ def main() -> None:
     path, lang, intro = None, "it", None
     n_main, n_more = 4, 6
     min_sim, show_folded = 0.62, False
-    do_translate, model, hero = False, "openrouter/free", DEFAULT_HERO
+    do_translate, model, hero = False, os.environ.get("LLM_MODEL", "opencodego:deepseek-v4.1-flash"), DEFAULT_HERO
     images, summaries, do_jev = "all", False, True
     i = 0
     while i < len(argv):
@@ -1927,11 +1962,77 @@ def main() -> None:
     if do_jev:
         jev_judge(clusters, prefix, TOPIC_AI)
 
-    METER.stage("fili")
-    threads = find_threads_llm(clusters, model=model, cache_path=f"{prefix}.threads.json", quiet=True)
-    if not threads:
-        threads = find_threads(clusters)
-    print(f"  fili: {len(threads)}" + "".join(f"\n    · {t['title']} ({len(t['members'])})" for t in threads) + "\n")
+    for n, c in enumerate(clusters):
+        c["sid"] = f"s{n}"
+    # Threads and summaries do not depend on each other, so they run together. The page
+    # needs text only for what it shows (plus SPARE cards per section, because the final
+    # revision can drop, move or demote cards and others move up); the summary step writes
+    # the Italian title and summary from the article in one pass, then the revision checks
+    # both against the article. Images come last, on the ranking the revision leaves.
+    SPARE = 2
+
+    def visible(extra: int = 0) -> list:
+        return [c for _, _, rows, more, _ in split_areas(clusters, n_main + extra, n_more)
+                for c in rows + more]
+
+    def find_all_threads():
+        found = find_threads_llm(clusters, model=model, cache_path=f"{prefix}.threads.json",
+                                 quiet=True)
+        return found or find_threads(clusters)
+
+    def digest_pass(batch: list, label: str):
+        import summarize as SM
+        print(f"  [{label}] {len(batch)} schede: lettura, titolo + riassunto, revisione finale")
+        cache, sst = SM.summarize(
+            [{"title": c["title"], "links": [x["link"] for x in c["sources"]]} for c in batch],
+            model=model, quiet=(lang == "en"),
+            areas=[(x["key"], x["jev"]["what"] + (" NON per: " + x["jev"]["not_for"] if x["jev"].get("not_for") else ""))
+                   for x in AREAS])
+        for c in batch:
+            c["summary"] = SM.lookup(cache, c["title"])
+            c["title_it"] = sst["titles"].get(SM.digest(c["title"]), "")
+        print(f"  [{label}] nuovi {sst['done']}, dalla cache {sst['cached']}, "
+              f"non disponibili {sst['empty']}")
+        return sst["review"], SM.digest
+
+    do_sum = summaries and lang == "it"
+    METER.stage("fili+riassunti")
+    attempted = visible(SPARE) if do_sum else []
+    print(f"  fase A: fili e riassunti in parallelo ({len(attempted)} schede, con le scorte)"
+          if do_sum else "  fase A: fili")
+    with ThreadPoolExecutor(2) as pool:
+        ft = pool.submit(find_all_threads)
+        fs = pool.submit(digest_pass, attempted, "A") if do_sum else None
+        threads = ft.result()
+        done = fs.result() if fs else None
+    if done:                                   # after the join: nothing else reads clusters now
+        revise(clusters, attempted, *done)
+    # a dropped card must not stay inside a thread
+    for t in threads:
+        t["members"] = [m for m in t["members"] if not m.get("drop")]
+    threads = [t for t in threads if len(t["members"]) >= 2]
+    print(f"  fili: {len(threads)}" + "".join(
+        f"\n    · {t['title']} ({len(t['members'])})" for t in threads) + "\n")
+    if do_sum:
+        seen = {id(c) for c in attempted}
+        late = [c for c in visible() if id(c) not in seen]
+        if late:
+            print("  fase B: schede salite in classifica dopo la revisione")
+            revise(clusters, late, *digest_pass(late, "B"))
+        # an unreadable article has no Italian summary: translate just its title and preview
+        bare = [c for c in visible() if not c.get("summary")]
+        if bare:
+            import translate as TR
+            print(f"  {len(bare)} schede senza articolo leggibile: traduco solo titolo e anteprima")
+            cache, st = TR.translate(
+                [{"title": c["title"], "snippet": c["snippet"]} for c in bare],
+                model=model, quiet=True, meter=False)
+            for c in bare:
+                row = TR.lookup(cache, c["title"], c["snippet"])
+                if row:
+                    c["title_it"], c["snippet_it"] = row["title"], row["snippet"]
+            print(f"  tradotte {st['translated']}, dalla cache {st['cached']}, fallite {st['failed']}")
+
 
     METER.stage("immagini")
     if images != "off":
@@ -1964,37 +2065,6 @@ def main() -> None:
             print(f"  foto incorporate nell'HTML: {n_emb} ({n_bytes // 1024} KB)")
         print(f"  trovate {ist['found']}, dalla cache {ist['cached']}, "
               f"nessuna {ist['empty']}\n")
-
-    METER.stage("traduzione")
-    if do_translate:
-        import translate as TR
-        print("  traduzione in italiano (dopo il clustering, mai prima)...")
-        cache, st = TR.translate(
-            [{"title": c["title"], "snippet": c["snippet"]} for c in clusters],
-            model=model, quiet=lang == "en")
-        for c in clusters:
-            row = TR.lookup(cache, c["title"], c["snippet"])
-            if row:
-                c["title_it"] = row["title"]
-                c["snippet_it"] = row["snippet"]
-        print(f"  tradotte {st['translated']}, dalla cache {st['cached']}, "
-              f"fallite {st['failed']}\n")
-
-    for n, c in enumerate(clusters):
-        c["sid"] = f"s{n}"
-    METER.stage("riassunti")
-    if summaries and lang == "it":
-        import summarize as SM
-        print("  riassunti degli articoli (Jina + OpenRouter)...")
-        shown = [c for _, _, rows, more, _ in split_areas(clusters, n_main, n_more)
-                 for c in rows + more]
-        cache, sst = SM.summarize(
-            [{"title": c["title"], "links": [x["link"] for x in c["sources"]]}
-             for c in shown], model=model, quiet=(lang == "en"))
-        for c in shown:
-            c["summary"] = SM.lookup(cache, c["title"])
-        print(f"  nuovi {sst['done']}, dalla cache {sst['cached']}, "
-              f"non disponibili {sst['empty']}\n")
 
     per_area = {a["key"]: sum(1 for c in clusters if c["area"] == a["key"])
                 for a in AREAS}
@@ -2042,7 +2112,7 @@ def main() -> None:
         render_html(clusters, meta, lang, intro, generated, n_main, n_more,
                     hero, images, threads))
     open(mp, "w").write(
-        render_md(clusters, meta, lang, intro, generated, n_main, n_more))
+        render_md(clusters, meta, lang, generated, intro, n_main, n_more))
     print(f"  scritto {hp}\n  scritto {mp}\n")
     METER.finish()
 

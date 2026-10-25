@@ -57,8 +57,8 @@ python3 format_news.py --lang it --intro "..." [--main 4] [--more 6] [--folded]
 | `--more N` | secondary cards shown per area (default 6) |
 | `--sim F` | same-event merge threshold (default 0.62) |
 | `--folded` | list every merge, with its folded titles - check the clustering |
-| `--translate` | translate titles and snippets into Italian (see below) |
-| `--model M` | model for translation, summaries and threads (default `$LLM_MODEL`, else `openrouter/free`; `opencodego:<model>` uses OpenCode Go, key `OPENCODEGO_API_KEY`) |
+| `--translate` | no longer used: titles and summaries are written in Italian from the article by the summary step (`--summaries`) |
+| `--model M` | model for translation, summaries and threads (default `$LLM_MODEL`, else `opencodego:deepseek-v4.1-flash` via OpenCode Go, key `OPENCODEGO_API_KEY`; bare ids go to OpenRouter) |
 | `--hero N` | banner image: `earth` (default), `circuit`, `code`, `robot`, `laptop`, `off`, or any URL |
 | `--images M` | story images: `all` (default), `main` (lead cards only), `off` |
 

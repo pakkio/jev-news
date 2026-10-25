@@ -57,14 +57,14 @@ def serper_search(
     return data.get("news" if news else "organic") or []
 
 
-def jina_read(url: str) -> tuple[bool, str]:
+def jina_read(url: str, timeout: int = 20) -> tuple[bool, str]:
     """Fetch a page as markdown. Returns (ok, text); on failure text is the error."""
     req = urllib.request.Request(
         f"https://r.jina.ai/{url}",
         headers={"Accept": "text/markdown"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return True, resp.read().decode(errors="replace")
     except urllib.error.HTTPError as e:
         return False, f"blocked ({e.code} {e.reason})"
