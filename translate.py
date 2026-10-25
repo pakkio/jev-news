@@ -51,6 +51,9 @@ Regole:
   ospedale, Council of Europe = Consiglio d'Europa;
 - non lasciare abbreviazioni inglesi ("Dept.", "Gov.", "Sen."): scrivile per esteso
   in italiano;
+- "AI" generico si scrive "IA" ("modelli IA", "agenti IA"); resta "AI" solo dentro un nome
+  proprio (Reflection AI, NordLayer AI Scout);
+- nei titoli solo la prima parola e i nomi propri hanno la maiuscola;
 - non aggiungere e non togliere informazione;
 - se una stringa contiene gia' dell'italiano, copiala identica;
 - se una stringa e' vuota, restituisci stringa vuota.

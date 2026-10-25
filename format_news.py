@@ -366,14 +366,24 @@ def clean_title(title: str, source: str = "") -> str:
     return t.strip() or title
 
 
+def ia(text: str) -> str:
+    """Italian says "IA": generic "AI" becomes "IA", but not inside a proper name
+    ("Reflection AI", "AI Jobs Institute")."""
+    if CURRENT_LANG != "it":
+        return text
+    def fix(m):
+        return m.group(0) if m.group(1) or m.group(2) else m.group(0).replace("AI", "IA")
+    return re.sub(r"(\b[A-Z][\w-]*\s)?\bAI\b(\s[A-Z])?", fix, text)
+
+
 def show(c: dict, field: str = "title") -> str:
     """Translated text when available, English otherwise; headlines are cleaned
     of site furniture."""
     text = c.get(f"{field}_it") or c[field]
     if field == "title" and c.get("sources"):
-        return clean_title(text, c["sources"][0]["name"])
+        return ia(clean_title(text, c["sources"][0]["name"]))
     if field == "snippet":
-        return tidy(text)
+        return ia(tidy(text))
     return text
 
 
@@ -1189,7 +1199,7 @@ def render_html(clusters, meta, lang, intro, generated, n_main=4, n_more=6,
                  + (f" · {t['single']}" if len(c["sources"]) == 1
                     else f" · {len(c['sources'])} {t['sources']}")
                  + (f" · \u2605 {round(score(c))}" if DEBUG else ""),
-            text=tidy(c.get("summary") or "") or show(c, "snippet"),
+            text=ia(tidy(c.get("summary") or "")) or show(c, "snippet"),
             ok=bool(c.get("summary")) or lang != "it", link=first["link"],
             others=[[x["name"], x["link"]] for x in c["sources"][1:6]])
     outlets = len({x["name"] for c in clusters for x in c["sources"]})
